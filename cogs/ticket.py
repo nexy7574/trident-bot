@@ -23,7 +23,7 @@ class TicketCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    def log_channel(self, config, guild: discord.Guild) -> Optional[discord.TextChannel]:
+    def log_channel(self, config) -> Optional[discord.TextChannel]:
         if not config.logChannel:
             return
         channel = self.bot.get_channel(config.logChannel)
@@ -32,6 +32,12 @@ class TicketCog(commands.Cog):
         if not channel.can_send(discord.Embed()):
             return
         return channel
+
+    @staticmethod
+    def is_support(config, member: discord.Member) -> bool:
+        support_role_ids = config.supportRoles
+        our_roles = [x.id for x in member.roles]
+        return any(x in our_roles for x in support_role_ids)
 
     tickets_group = discord.SlashCommandGroup("tickets", "Manage tickets.")
 
@@ -182,7 +188,7 @@ class TicketCog(commands.Cog):
         except orm.NoMatch:
             return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
         await ticket.guild.load()
-        if not any(x.id in ticket.guild.supportRoles for x in ctx.author.roles):
+        if not self.is_support(ticket.guild, ctx.author):
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
 
         if ctx.channel.permissions_for(member).read_messages:
@@ -204,7 +210,7 @@ class TicketCog(commands.Cog):
 
         await ticket.guild.load()
 
-        if not any(x.id in ticket.guild.supportRoles for x in ctx.author.roles):
+        if not self.is_support(ticket.guild, ctx.author):
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
 
         if not ctx.channel.permissions_for(ctx.me).manage_permissions:
@@ -213,7 +219,7 @@ class TicketCog(commands.Cog):
         if member == ctx.user:
             await ctx.channel.set_permissions(member, overwrite=no, reason=f"Left.")
             return await ctx.respond(f"\N{outbox tray} {member.mention} left the ticket.")
-        if not any(x.id in ticket.guild.supportRoles for x in member.roles):
+        elif not self.is_support(ticket.guild, member):
             await ctx.channel.set_permissions(member, overwrite=no, reason=f"Removed.")
             return await ctx.respond(f"\N{outbox tray} {member.mention} was removed from the ticket.")
 
@@ -231,10 +237,10 @@ class TicketCog(commands.Cog):
         except orm.NoMatch:
             return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
         await ticket.guild.load()
-        if not any(x.id in ticket.guild.supportRoles for x in ctx.author.roles) or ctx.author.id != ticket.author:
+        if not self.is_support(ticket.guild, ctx.author) and ctx.author.id != ticket.author:
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
 
-        log_channel = self.log_channel(ticket.guild, ctx.guild)
+        log_channel = self.log_channel(ticket.guild)
         if log_channel:
             await log_channel.send(
                 f"Ticket #{ticket.localID} closed by {ctx.author.mention}.",
