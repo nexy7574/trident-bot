@@ -164,9 +164,7 @@ class ServerConfigView(View):
         for role in self.roles:
             paginator.add_line(f"{role.mention} - {role.name} - `{role.id}`")
 
-        self.paginator = pages.Paginator(
-            [discord.Embed(description=page) for page in paginator.pages]
-        )
+        self.paginator = pages.Paginator([discord.Embed(description=page) for page in paginator.pages])
         self.modify_support_ping_button()
 
     def modify_support_ping_button(self):
@@ -178,10 +176,7 @@ class ServerConfigView(View):
             self.children[1].style = discord.ButtonStyle.green
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return (
-            interaction.user == self.ctx.user and
-            await super().interaction_check(interaction)
-        )
+        return interaction.user == self.ctx.user and await super().interaction_check(interaction)
 
     @button(label="View support roles")
     async def do_view_roles(self, _, interaction: discord.Interaction):

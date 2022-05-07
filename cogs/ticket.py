@@ -14,7 +14,7 @@ yes = discord.PermissionOverwrite(
     embed_links=True,
     attach_files=True,
     external_emojis=True,
-    use_slash_commands=True
+    use_slash_commands=True,
 )
 no = discord.PermissionOverwrite.from_pair(discord.Permissions.none(), discord.Permissions.all())
 
@@ -147,7 +147,7 @@ class TicketCog(commands.Cog):
                         channel=channel.id,
                         author=ctx.author.id,
                         openedAt=discord.utils.utcnow(),
-                        subject=topic
+                        subject=topic,
                     )
                 except Exception as e:
                     await channel.delete()
@@ -170,10 +170,7 @@ class TicketCog(commands.Cog):
                             description="Subject: {}".format(topic),
                             colour=discord.Colour.green(),
                             timestamp=channel.created_at,
-                        ).set_author(
-                            name=str(ctx.author),
-                            icon_url=ctx.author.display_avatar.with_format("png")
-                        )
+                        ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.with_format("png")),
                     )
                     return await ctx.edit(content="Ticket created! {}".format(channel.mention))
 
@@ -214,7 +211,7 @@ class TicketCog(commands.Cog):
         return await ctx.respond(
             "If you want someone to leave a ticket, please ask them to run this command themself.\n"
             "It is too hard to moderate staff removing each other, so to prevent abuse, this cannot happen at all.",
-            ephemeral=True
+            ephemeral=True,
         )
 
     @tickets_group.command(name="close")
@@ -233,11 +230,10 @@ class TicketCog(commands.Cog):
             await log_channel.send(
                 f"Ticket #{ticket.localID} closed by {ctx.author.mention}.",
                 embed=discord.Embed(
-                    description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\n"
-                                f"Reason: {reason}",
+                    description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\n" f"Reason: {reason}",
                     colour=discord.Colour.greyple(),
-                    timestamp=discord.utils.utcnow()
-                ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
+                    timestamp=discord.utils.utcnow(),
+                ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
             )
             await ctx.respond("Logged ticket. Closing now!")
         else:

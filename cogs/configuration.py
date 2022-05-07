@@ -11,9 +11,7 @@ class ConfigurationCog(commands.Cog):
         self.bot = bot
 
     config_group = discord.SlashCommandGroup(
-        "settings",
-        "Manage server settings.",
-        default_member_permissions=discord.Permissions(manage_guild=True)
+        "settings", "Manage server settings.", default_member_permissions=discord.Permissions(manage_guild=True)
     )
 
     @commands.slash_command(name="setup")
@@ -74,15 +72,16 @@ class ConfigurationCog(commands.Cog):
             title="Server Configuration",
             description="Use `/settings <value>` to change a setting.",
             colour=discord.Colour.blurple(),
-            timestamp=discord.utils.utcnow()
+            timestamp=discord.utils.utcnow(),
         )
-        embed.add_field(name="Total tickets:", value="{:,}".format(guild.ticketCounter-1))
+        embed.add_field(name="Total tickets:", value="{:,}".format(guild.ticketCounter - 1))
         category_channel = ctx.guild.get_channel(guild.ticketCategory)
         embed.add_field(name="Ticket category:", value=category_channel.mention if category_channel else "None")
         log_channel = ctx.guild.get_channel(guild.logChannel)
         embed.add_field(name="Log channel:", value=log_channel.mention if log_channel else "None")
         embed.add_field(name="Support roles:", value=str(len(guild.supportRoles)))
         embed.add_field(name="Ping support roles:", value="Yes" if guild.pingSupportRoles else "No")
+        embed.add_field(name="Max open tickets:", value=str(guild.maxTickets))
         embed.set_footer(text="Server ID: {}".format(guild.id))
         view = ServerConfigView(ctx, guild, *guild.supportRoles)
         await ctx.respond(embed=embed, view=view)
@@ -98,10 +97,7 @@ class ConfigurationCog(commands.Cog):
             return await ctx.respond("This server has not yet been configured. Please use /setup.", ephemeral=True)
 
         view = ConfirmView("Yes", "No")
-        await ctx.respond(
-            "Are you sure you want to reset your server config? You'll have to re-run /setup!",
-            view=view
-        )
+        await ctx.respond("Are you sure you want to reset your server config? You'll have to re-run /setup!", view=view)
         await view.wait()
         if view.chosen is None or view.chosen is False:
             return await ctx.edit(content="Cancelled.", view=None)
@@ -110,8 +106,7 @@ class ConfigurationCog(commands.Cog):
             return await ctx.edit(content="Reset.", view=None)
 
     config_support_roles_group = config_group.create_subgroup(
-        "support-roles",
-        "Manage the roles that're added to tickets."
+        "support-roles", "Manage the roles that're added to tickets."
     )
 
     @config_support_roles_group.command(name="add")
@@ -175,6 +170,27 @@ class ConfigurationCog(commands.Cog):
 
         await guild.update(ticketCategory=category.id)
         await ctx.respond("Ticket category set to {}.".format(category.mention), ephemeral=True)
+
+    @config_group.command(name="max-tickets")
+    @discord.default_permissions(manage_channels=True)
+    async def set_max_tickets(
+        self,
+        ctx: discord.ApplicationContext,
+        max_tickets: discord.Option(
+            int,
+            description="The maximum number of tickets that can be open at once.",
+            min_value=1,
+            max_value=50,
+            default=50,
+        ),
+    ):
+        """Sets the maximum number of tickets that can be open at once."""
+        try:
+            guild = await Guild.objects.get(id=ctx.guild.id)
+        except orm.NoMatch:
+            return await ctx.respond("This server has not yet been configured. Please use /setup.", ephemeral=True)
+        await guild.update(maxTickets=max_tickets)
+        await ctx.respond("Max tickets set to {}.".format(max_tickets), ephemeral=True)
 
 
 def setup(bot):
