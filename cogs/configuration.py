@@ -1,8 +1,7 @@
 import discord
 from discord.ext import commands
-from discord.ui import Modal, InputText
 
-from database import Ticket, Guild, orm
+from database import Guild, orm
 from views import ChannelSelectorView, RoleSelectorView, ConfirmView, ServerConfigView
 
 
@@ -70,7 +69,7 @@ class ConfigurationCog(commands.Cog):
 
         embed = discord.Embed(
             title="Server Configuration",
-            description="Use `/settings <value>` to change a setting.",
+            description="Use `/settings ` to see a list of settings you can change.",
             colour=discord.Colour.blurple(),
             timestamp=discord.utils.utcnow(),
         )

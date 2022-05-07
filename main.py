@@ -1,9 +1,10 @@
 import asyncio
+import json
+from pathlib import Path
 
 import discord
 from discord.ext import commands
-import json
-from pathlib import Path
+
 from database import registry
 
 
@@ -44,7 +45,7 @@ class Bot(commands.Bot):
 async def main():
     bot = Bot()
     await registry.create_all()
-    return await bot.start(bot.config["token"])
+    return await bot.start(bot.config["token"] if bot.config["debug"] is False else bot.config["debug_token"])
 
 
 if __name__ == "__main__":
