@@ -199,6 +199,8 @@ class TicketCog(commands.Cog):
             ticket = await Ticket.objects.get(channel=ctx.channel.id)
         except orm.NoMatch:
             return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
+        if member.id == ticket.author:
+            return await ctx.respond("No.", ephemeral=True)
         await ticket.guild.load()
         if not any(x.id in ticket.guild.supportRoles for x in ctx.author.roles):
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
