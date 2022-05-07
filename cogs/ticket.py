@@ -201,14 +201,21 @@ class TicketCog(commands.Cog):
             return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
         if member.id == ticket.author:
             return await ctx.respond("No.", ephemeral=True)
+
         await ticket.guild.load()
+
         if not any(x.id in ticket.guild.supportRoles for x in ctx.author.roles):
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
+
         if not ctx.channel.permissions_for(ctx.me).manage_permissions:
             return await ctx.respond(content="I don't have permission to remove members.", ephemeral=True)
-        if member == ctx.user or not any(x.id in ticket.guild.supportRoles for x in member.roles):
-            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Removed.")
+
+        if member == ctx.user:
+            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Left.")
             return await ctx.respond(f"\N{outbox tray} {member.mention} left the ticket.")
+        if not any(x.id in ticket.guild.supportRoles for x in member.roles):
+            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Removed.")
+            return await ctx.respond(f"\N{outbox tray} {member.mention} was removed from the ticket.")
 
         return await ctx.respond(
             "If you want someone to leave a ticket, please ask them to run this command themself.\n"
