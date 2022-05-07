@@ -176,7 +176,7 @@ class TicketCog(commands.Cog):
                             description="Subject: {}".format(topic),
                             colour=discord.Colour.green(),
                             timestamp=channel.created_at,
-                        ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.with_format("png")),
+                        ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
                     )
                     log_channel = self.log_channel(guild)
                     if log_channel is not None:
@@ -190,7 +190,7 @@ class TicketCog(commands.Cog):
                                 name=str(ctx.author), icon_url=ctx.author.display_avatar.url
                             ).add_field(name="Jump to channel", value=channel.mention)
                         )
-                    return await ctx.edit(content="Ticket created! {}".format(channel.mention))
+                    return await ctx.respond(content="Ticket created! {}".format(channel.mention), ephemeral=True)
 
     @tickets_group.command(name="add-member")
     async def add_member(self, ctx: discord.ApplicationContext, member: discord.Member):
