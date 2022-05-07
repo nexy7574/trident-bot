@@ -178,6 +178,18 @@ class TicketCog(commands.Cog):
                             timestamp=channel.created_at,
                         ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.with_format("png")),
                     )
+                    log_channel = self.log_channel(guild)
+                    if log_channel is not None:
+                        await log_channel.send(
+                            embed=discord.Embed(
+                                title="Ticket #{:,} opened!".format(ticket.localID),
+                                description="Subject: {}".format(topic),
+                                colour=discord.Colour.blurple(),
+                                timestamp=channel.created_at,
+                            ).set_author(
+                                name=str(ctx.author), icon_url=ctx.author.display_avatar.url
+                            ).add_field(name="Jump to channel", value=channel.mention)
+                        )
                     return await ctx.edit(content="Ticket created! {}".format(channel.mention))
 
     @tickets_group.command(name="add-member")
@@ -210,7 +222,7 @@ class TicketCog(commands.Cog):
 
         await ticket.guild.load()
 
-        if not self.is_support(ticket.guild, ctx.author):
+        if not self.is_support(ticket.guild, ctx.author) and member != ctx.author:
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
 
         if not ctx.channel.permissions_for(ctx.me).manage_permissions:
@@ -237,8 +249,9 @@ class TicketCog(commands.Cog):
         except orm.NoMatch:
             return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
         await ticket.guild.load()
-        if not self.is_support(ticket.guild, ctx.author) and ctx.author.id != ticket.author:
-            return await ctx.respond(content="You are not a support member.", ephemeral=True)
+        if not self.is_support(ticket.guild, ctx.author):
+            if ticket.author != ctx.author.id:
+                return await ctx.respond(content="You are not a support member.", ephemeral=True)
 
         log_channel = self.log_channel(ticket.guild)
         if log_channel:
