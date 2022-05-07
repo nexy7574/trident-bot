@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import discord
@@ -11,6 +12,7 @@ from database import registry
 class Bot(commands.Bot):
     def __init__(self):
         self.home = Path(__file__).parent
+        os.chdir(self.home)
         with open(self.home / "config.json") as config_file:
             self.config = json.load(config_file)
 
