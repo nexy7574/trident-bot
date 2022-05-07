@@ -88,6 +88,7 @@ class ConfigurationCog(commands.Cog):
 
     @config_group.command(name="reset")
     @discord.default_permissions(administrator=True)
+    @commands.has_permissions(administrator=True)
     async def reset_config(self, ctx: discord.ApplicationContext):
         """Resets your server's configuration."""
         try:
