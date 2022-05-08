@@ -17,6 +17,7 @@ class Guild(orm.Model):
         "supportRoles": orm.JSON(default=[]),  # list of role IDs
         "pingSupportRoles": orm.Boolean(default=True),
         "maxTickets": orm.Integer(default=50),
+        "supportEnabled": orm.Boolean(default=True),
     }
 
 
@@ -46,4 +47,15 @@ class Tag(orm.Model):
         "author": orm.BigInteger(),
         "owner": orm.BigInteger(),
         "uses": orm.Integer(default=0),
+    }
+
+
+class PersistentButtons(orm.Model):
+    tablename = "buttons"
+    registry = registry
+    fields = {
+        "id": orm.BigInteger(primary_key=True, default=discord.utils.generate_snowflake),
+        "guild": orm.ForeignKey(Guild, on_delete="CASCADE"),
+        "channel": orm.BigInteger(),
+        "message": orm.BigInteger(),
     }

@@ -3,9 +3,9 @@ from typing import Optional
 
 import discord
 from discord.ext import commands
-from discord.ui import Modal, InputText
 
 from database import Ticket, Guild, orm
+from views import TopicModal
 
 yes = discord.PermissionOverwrite(
     read_messages=True,
@@ -47,35 +47,11 @@ class TicketCog(commands.Cog):
     @commands.max_concurrency(1, commands.BucketType.member, wait=False)
     async def new(self, ctx: discord.ApplicationContext, topic: str = None):
         """Creates a new support ticket in the current server."""
-        if not ctx.guild:
-            return await ctx.respond("This command can only be used in a server.")
-
         if topic is None:
-
-            class TopicModal(Modal):
-                def __init__(self):
-                    super().__init__(title="Enter a topic for your ticket")
-                    self.add_item(
-                        InputText(
-                            label="Why are you opening this ticket?",
-                            placeholder="This thing does that when it shouldn't.......",
-                            min_length=2,
-                            max_length=2000,
-                            required=False,
-                        )
-                    )
-
-                async def callback(self, interaction: discord.Interaction):
-                    nonlocal topic
-                    topic = self.children[0].value
-                    await interaction.response.send_message("Input successful.", ephemeral=True)
-                    await interaction.delete_original_message(delay=0.2)
-                    self.stop()
-
             modal = TopicModal()
             await ctx.send_modal(modal)
             await modal.wait()
-
+            topic = modal.topic
         else:
             await ctx.defer(ephemeral=True)  # Show loading until we can actually respond
 
@@ -87,6 +63,9 @@ class TicketCog(commands.Cog):
             return await ctx.respond(
                 "This server has not yet set the bot up. Please ask an administrator to run `/setup`.", ephemeral=True
             )
+
+        if guild.supportEnabled is False:
+            return await ctx.respond("This server is not currently accepting new tickets.", ephemeral=False)
 
         # Next, we need to check to see if the user has a ticket open, in this server.
         try:

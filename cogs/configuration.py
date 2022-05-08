@@ -26,7 +26,7 @@ class ConfigurationCog(commands.Cog):
         await ctx.respond("Select a category to use for tickets.", view=view)
         await view.wait()
         if not view.chosen:
-            return await ctx.respond("No category selected.")
+            return await ctx.edit(content="No category selected.", view=None)
         db_kwargs["ticketCategory"] = int(view.chosen)
 
         view = ChannelSelectorView(lambda: ctx.guild.text_channels, "channel")
@@ -34,14 +34,14 @@ class ConfigurationCog(commands.Cog):
         await ctx.edit(content="Please select a channel to send logs to.", view=view)
         await view.wait()
         if not view.chosen:
-            return await ctx.respond("No channel selected.")
+            return await ctx.edit(content="No channel selected.", view=None)
         db_kwargs["logChannel"] = int(view.chosen)
 
         view = RoleSelectorView(lambda: ctx.guild.roles, (1, 25))
         await ctx.edit(content="Please select roles to assign to tickets. Pick between 1 and 25.", view=view)
         await view.wait()
         if not view.roles:
-            return await ctx.respond("No roles selected.")
+            return await ctx.edit(content="No roles selected.", view=None)
         db_kwargs["supportRoles"] = view.roles
 
         view = ConfirmView("Yes", "No")
@@ -191,6 +191,29 @@ class ConfigurationCog(commands.Cog):
             return await ctx.respond("This server has not yet been configured. Please use /setup.", ephemeral=True)
         await guild.update(maxTickets=max_tickets)
         await ctx.respond("Max tickets set to {}.".format(max_tickets), ephemeral=True)
+
+    @config_group.command(name="new-tickets-enabled")
+    @discord.default_permissions(manage_channels=True)
+    async def set_support_enabled(
+            self,
+            ctx: discord.ApplicationContext,
+            enabled: discord.Option(
+                bool,
+                default=None,
+                description="If True, this will allow new tickets to be created. Blank toggles current setting."
+            )
+    ):
+        """Enables or disables new ticket creation"""
+        try:
+            guild = await Guild.objects.get(id=ctx.guild.id)
+        except orm.NoMatch:
+            return await ctx.respond("This server has not yet been configured. Please use /setup.", ephemeral=True)
+
+        if enabled is None:
+            enabled = not guild.supportEnabled
+
+        await guild.update(supportEnabled=enabled)
+        await ctx.respond("Ticket creation is now {}.".format("enabled" if enabled else "disabled"), ephemeral=True)
 
 
 def setup(bot):

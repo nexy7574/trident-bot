@@ -1,8 +1,29 @@
 from typing import List, Callable, Tuple, Optional
 
 import discord
+import orm
 from discord.ext import commands, pages
 from discord.ui import View, Select, button, Modal, InputText, Button
+
+
+class TopicModal(Modal):
+    def __init__(self):
+        super().__init__(title="Enter a topic for your ticket")
+        self.add_item(
+            InputText(
+                label="Why are you opening this ticket?",
+                placeholder="This thing does that when it shouldn't.......",
+                min_length=2,
+                max_length=2000,
+                required=False,
+            )
+        )
+        self.topic = None
+
+    async def callback(self, interaction: discord.Interaction):
+        self.topic = self.children[0].value
+        await interaction.response.send_message("Input successful. You can dismiss this message.", ephemeral=True)
+        self.stop()
 
 
 class ChannelSelectorView(View):
@@ -21,9 +42,6 @@ class ChannelSelectorView(View):
                 self.add_option(label=category.name, emoji=emojis.get(type(category), ""), value=str(category.id))
 
         async def callback(self, interaction: discord.Interaction):
-            await interaction.response.send_message(
-                "Selected %s <#%s>." % (self.channel_type, self.values[0]), ephemeral=True, delete_after=0.1
-            )
             self.view.chosen = self.values[0]
             self.view.stop()
 
@@ -34,12 +52,16 @@ class ChannelSelectorView(View):
         self.channel_type = channel_type
         self.add_item(self.Selector(self.channel_getter(), self.channel_type))
 
-    @button(label="Refresh", emoji="\U0001f504")
+    @button(label="Refresh", emoji="\U0001f504", style=discord.ButtonStyle.blurple)
     async def do_refresh(self, _, interaction: discord.Interaction):
         self.remove_item(self.children[1])
         self.add_item(self.Selector(self.channel_getter(), self.channel_type))
         await interaction.edit_original_message(view=self)
         await interaction.response.send_message("Refreshed options.", ephemeral=True, delete_after=0.1)
+
+    @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
+    async def do_cancel(self, _, __):
+        self.stop()
 
 
 class RoleSelectorView(View):
@@ -63,9 +85,6 @@ class RoleSelectorView(View):
                 self.max_values = len(self.options)
 
         async def callback(self, interaction: discord.Interaction):
-            await interaction.response.send_message(
-                "Selected %d roles" % len(self.values), ephemeral=True, delete_after=0.1
-            )
             self.view.roles = list(map(int, self.values))
             self.view.stop()
 
@@ -107,7 +126,7 @@ class RoleSelectorView(View):
             fetched = [role for role in fetched if self.search_term.lower().strip() in role.name.lower().strip()]
         return fetched
 
-    @button(label="Refresh", emoji="\U0001f504")
+    @button(label="Refresh", emoji="\U0001f504", style=discord.ButtonStyle.blurple)
     async def do_refresh(self, _, interaction: discord.Interaction):
         self.remove_item(self.children[2])
         new = self.create_selector()
@@ -128,6 +147,10 @@ class RoleSelectorView(View):
         new = self.create_selector()
         self.add_item(new)
         await interaction.edit_original_message(view=self)
+
+    @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
+    async def do_cancel(self, _, __):
+        self.stop()
 
 
 class ConfirmView(View):
@@ -199,3 +222,144 @@ class ServerConfigView(View):
             return await interaction.response.send_message("Support ping roles have been turned off.", ephemeral=True)
         else:
             return await interaction.response.send_message("Support ping roles have been turned on.", ephemeral=True)
+
+
+class PersistentCreateTicketButtonView(View):
+    def __init__(self, bot, db_instance):
+        super().__init__(timeout=None)
+        self.db = db_instance
+        self.bot = bot
+
+    def log_channel(self, config) -> Optional[discord.TextChannel]:
+        if not config.logChannel:
+            return
+        channel = self.bot.get_channel(config.logChannel)
+        if not channel:
+            return
+        if not channel.can_send(discord.Embed()):
+            return
+        return channel
+
+    @button(label="Create ticket", style=discord.ButtonStyle.blurple, emoji="\N{inbox tray}")
+    async def do_create_ticket(self, _, interaction: discord.Interaction):
+        from database import Ticket, Guild
+        from cogs.ticket import yes, no
+
+        modal = TopicModal()
+
+        try:
+            ticket = await Ticket.objects.get(author=interaction.user.id, guild__id=interaction.guild)
+        except orm.NoMatch:
+            try:
+                guild = await Guild.objects.get(id=interaction.guild.id)
+            except orm.NoMatch:
+                await interaction.edit_original_message(view=None)
+                await interaction.response.send_message("You are not in a guild with a ticket system.", ephemeral=True)
+                await self.db.delete()
+                return self.stop()
+
+            await interaction.response.send_modal(modal)
+            await modal.wait()
+        else:
+            channel = self.bot.get_channel(ticket.channel)
+            if not channel:
+                await ticket.delete()
+                return await interaction.response.send_message(
+                    "Your previous ticket was not closed correctly. It has now been deleted, please try again.",
+                    ephemeral=True,
+                )
+            return await interaction.response.send_message(
+                f"You already have a ticket open. <#{ticket.channel}>", ephemeral=True
+            )
+
+        sender = (
+            interaction.response.send_message if interaction.response.is_done() is False else interaction.followup.send
+        )
+
+        if guild.supportEnabled is False:
+            return await sender("The guild has disabled new tickets.", ephemeral=True)
+        category = self.bot.get_channel(guild.ticketCategory)
+        if category is None and guild.ticketCategory is not None:
+            await guild.update(ticketCategory=None)
+            return await sender(
+                "This server is not set up properly. Please ask an administrator to run `/setup`.", ephemeral=True
+            )
+
+        if not category.permissions_for(interaction.guild.me).manage_channels:
+            return await sender(
+                "I do not have permission to manage channels in the ticket category. Please ask an administrator to"
+                f" give me the `Manage Channels` permission in the category {category.name!r}",
+                ephemeral=True,
+            )
+        elif len(category.channels) == 50:
+            return await sender(
+                "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
+            )
+        elif len(category.channels) >= guild.maxTickets:
+            return await sender(
+                "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
+            )
+        else:
+            await sender("Creating ticket...", ephemeral=True)
+            support_roles = list(filter(lambda r: r is not None, map(interaction.guild.get_role, guild.supportRoles)))
+            overwrites = {
+                interaction.guild.default_role: no,
+                interaction.user: yes,
+                interaction.guild.me: yes,
+                **{r: yes for r in support_roles},
+            }
+            try:
+                channel = await category.create_text_channel(
+                    f"ticket-{guild.ticketCounter}",
+                    overwrites=overwrites,
+                    position=0,
+                    reason=f"Ticket created by {interaction.user.name}.",
+                )
+                await channel.edit(topic=modal.topic)
+            except discord.HTTPException as e:
+                return await interaction.edit_original_message(content="Failed to create ticket - {!s}".format(e))
+            try:
+                ticket = await Ticket.objects.create(
+                    localID=guild.ticketCounter,
+                    guild=guild,
+                    channel=channel.id,
+                    author=interaction.user.id,
+                    openedAt=discord.utils.utcnow(),
+                    subject=modal.topic,
+                )
+            except Exception as e:
+                await channel.delete()
+                await sender(content="Failed to create ticket - {!s}".format(e), ephemeral=True)
+                raise
+            else:
+                await guild.update(ticketCounter=guild.ticketCounter + 1)
+                if guild.pingSupportRoles:
+                    paginator = commands.Paginator(prefix="", suffix="", max_size=2000)
+                    for role in support_roles:
+                        paginator.add_line(f"{role.mention}")
+                    _pages = [" ".join(page.splitlines()) for page in paginator.pages]
+                    for page in _pages:
+                        await channel.send(page, allowed_mentions=discord.AllowedMentions(roles=True))
+
+                await channel.send(
+                    interaction.user.mention,
+                    embed=discord.Embed(
+                        title="Ticket #{:,}".format(ticket.localID),
+                        description="Subject: {}".format(modal.topic),
+                        colour=discord.Colour.green(),
+                        timestamp=channel.created_at,
+                    ).set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url),
+                )
+                log_channel = self.log_channel(guild)
+                if log_channel is not None:
+                    await log_channel.send(
+                        embed=discord.Embed(
+                            title="Ticket #{:,} opened!".format(ticket.localID),
+                            description="Subject: {}".format(modal.topic),
+                            colour=discord.Colour.blurple(),
+                            timestamp=channel.created_at,
+                        )
+                        .set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url)
+                        .add_field(name="Jump to channel", value=channel.mention)
+                    )
+                return await sender(content="Ticket created! {}".format(channel.mention), ephemeral=True)
