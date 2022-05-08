@@ -144,11 +144,18 @@ class ConfirmView(View):
             self.view.chosen = self.positive
             self.view.stop()
 
-    def __init__(self, confirm_label: str = "Yes", no_label: str = "No", cancel_label: str = "Cancel"):
+    def __init__(
+        self,
+        confirm_label: str = "Yes",
+        no_label: str = "No",
+        cancel_label: str = "Cancel",
+        show_cancel_button: bool = True,
+    ):
         super().__init__()
         self.add_item(self.ChoiceButton(confirm_label, True))
         self.add_item(self.ChoiceButton(no_label, False))
-        self.add_item(self.ChoiceButton(cancel_label, None))
+        if show_cancel_button:
+            self.add_item(self.ChoiceButton(cancel_label, None))
 
 
 # noinspection PyUnresolvedReferences

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 import discord
@@ -39,10 +40,11 @@ class TicketCog(commands.Cog):
         our_roles = [x.id for x in member.roles]
         return any(x in our_roles for x in support_role_ids)
 
-    tickets_group = discord.SlashCommandGroup("tickets", "Manage tickets.")
+    tickets_group = discord.SlashCommandGroup("ticket", "Manage the current, or create a new ticket.")
 
     @tickets_group.command()
-    @commands.max_concurrency(1, commands.BucketType.member, wait=True)
+    @discord.guild_only()
+    @commands.max_concurrency(1, commands.BucketType.member, wait=False)
     async def new(self, ctx: discord.ApplicationContext, topic: str = None):
         """Creates a new support ticket in the current server."""
         if not ctx.guild:
@@ -186,13 +188,39 @@ class TicketCog(commands.Cog):
                                 description="Subject: {}".format(topic),
                                 colour=discord.Colour.blurple(),
                                 timestamp=channel.created_at,
-                            ).set_author(
-                                name=str(ctx.author), icon_url=ctx.author.display_avatar.url
-                            ).add_field(name="Jump to channel", value=channel.mention)
+                            )
+                            .set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
+                            .add_field(name="Jump to channel", value=channel.mention)
                         )
                     return await ctx.respond(content="Ticket created! {}".format(channel.mention), ephemeral=True)
 
+    @tickets_group.command()
+    @commands.guild_only()
+    async def info(self, ctx: discord.ApplicationContext):
+        """Shows information about this ticket."""
+        try:
+            ticket = await Ticket.objects.get(channel=ctx.channel.id)
+        except orm.NoMatch:
+            return await ctx.respond(content="This channel is not a ticket.", ephemeral=True)
+
+        await ticket.guild.load()
+
+        embed = discord.Embed(
+            title=f"Ticket #{ticket.localID}",
+            description=f"**Global ID**: T#{ticket.id}\n"
+            f"**Ticket Number**: {ticket.localID:,}\n"
+            f"**Author**: <@{ticket.author}> (`{ticket.author}`)\n"
+            f"**Ticket Channel**: {ctx.channel.mention}\n"
+            f"**Ticket Opened**: {discord.utils.format_dt(ctx.channel.created_at, 'R')}\n"
+            f"**Ticket Locked**? {'Yes' if ticket.locked else 'No'}\n\n"
+            f"**Ticket Subject**:\n>>> {ticket.subject}",
+            colour=discord.Colour.blurple(),
+            timestamp=ctx.channel.created_at,
+        )
+        return await ctx.respond(embed=embed, ephemeral=True)
+
     @tickets_group.command(name="add-member")
+    @discord.guild_only()
     async def add_member(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Adds a member to this ticket. Support only."""
         try:
@@ -211,6 +239,7 @@ class TicketCog(commands.Cog):
         await ctx.respond(content="\N{inbox tray} {} has been added to this ticket. Say hi!".format(member.mention))
 
     @tickets_group.command(name="remove-member")
+    @discord.guild_only()
     async def remove_member(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Removes a member from this ticket. Support only."""
         try:
@@ -242,6 +271,8 @@ class TicketCog(commands.Cog):
         )
 
     @tickets_group.command(name="close")
+    @discord.guild_only()
+    @commands.max_concurrency(1, commands.BucketType.channel, wait=False)
     async def close(self, ctx: discord.ApplicationContext, reason: str = "No reason provided."):
         """Closes this ticket. Support or author only."""
         try:
@@ -252,6 +283,9 @@ class TicketCog(commands.Cog):
         if not self.is_support(ticket.guild, ctx.author):
             if ticket.author != ctx.author.id:
                 return await ctx.respond(content="You are not a support member.", ephemeral=True)
+
+        if ticket.locked and not ctx.author.guild_permissions.administrator:
+            return await ctx.respond("This ticket is currently locked, and as such cannot be closed.", ephemeral=True)
 
         log_channel = self.log_channel(ticket.guild)
         if log_channel:
@@ -269,6 +303,48 @@ class TicketCog(commands.Cog):
 
         await ticket.delete()
         await ctx.channel.delete(reason="Closed by {!s}.".format(ctx.author))
+
+    @tickets_group.command(name="lock")
+    @discord.guild_only()
+    @commands.max_concurrency(1, commands.BucketType.channel, wait=False)
+    async def lock(self, ctx: discord.ApplicationContext):
+        """Prevents the current ticket from being closed. Support only."""
+        try:
+            ticket = await Ticket.objects.get(channel=ctx.channel.id)
+        except orm.NoMatch:
+            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
+        await ticket.guild.load()
+        if not self.is_support(ticket.guild, ctx.author):
+            return await ctx.respond(content="You are not a support member.", ephemeral=True)
+
+        await ctx.defer()
+        await ticket.update(locked=not ticket.locked)
+        if ticket.locked:
+            if ctx.channel.permissions_for(ctx.me).manage_channels:
+                if not ctx.channel.name.startswith("\N{lock}"):
+                    await asyncio.wait_for(
+                        ctx.channel.edit(
+                            name="\N{lock}-ticket-{}".format(ticket.localID),
+                        ),
+                        timeout=10,
+                    )
+            return await ctx.respond(
+                "\N{lock} Ticket is now locked, so only administrators can close it. "
+                "Run this command again to unlock it.",
+                ephemeral=False,
+            )
+        else:
+            if ctx.channel.permissions_for(ctx.me).manage_channels:
+                if ctx.channel.name.startswith("\N{lock}"):
+                    self.bot.loop.create_task(
+                        ctx.channel.edit(
+                            name="ticket-{}".format(ticket.localID),
+                        )
+                    )
+            return await ctx.respond(
+                "\N{open lock} Ticket is now unlocked, so anyone can close it. " "Run this command again to lock it.",
+                ephemeral=False,
+            )
 
 
 def setup(bot):
