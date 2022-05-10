@@ -2,7 +2,6 @@ import re
 from typing import List, Callable, Tuple, Optional
 
 import discord
-import orm
 from discord.ext import commands, pages
 from discord.ui import View, Select, button, Modal, InputText, Button
 
@@ -15,7 +14,7 @@ class TopicModal(Modal):
                 label="Why are you opening this ticket?",
                 placeholder="This thing does that when it shouldn't.......",
                 min_length=2,
-                max_length=2000,
+                max_length=600,
                 required=False,
             )
         )
@@ -214,11 +213,7 @@ class ServerConfigView(View):
         }
 
         def replace(btn: Button, before: str = "on", after: str = "off"):
-            return re.sub(
-                r"\s%s$" % re.escape(before),
-                " " + after,
-                btn.label
-            )
+            return re.sub(r"\s%s$" % re.escape(before), " " + after, btn.label)
 
         if manual in [True, False]:
             # manual = False - option will be changed to enable
@@ -264,144 +259,3 @@ class ServerConfigView(View):
             return await interaction.followup.send("Ticket creation has been turned off.", ephemeral=True)
         else:
             return await interaction.followup.send("Ticket creation has been turned on.", ephemeral=True)
-
-
-class PersistentCreateTicketButtonView(View):
-    def __init__(self, bot, db_instance):
-        super().__init__(timeout=None)
-        self.db = db_instance
-        self.bot = bot
-
-    def log_channel(self, config) -> Optional[discord.TextChannel]:
-        if not config.logChannel:
-            return
-        channel = self.bot.get_channel(config.logChannel)
-        if not channel:
-            return
-        if not channel.can_send(discord.Embed()):
-            return
-        return channel
-
-    @button(label="Create ticket", style=discord.ButtonStyle.blurple, emoji="\N{inbox tray}")
-    async def do_create_ticket(self, _, interaction: discord.Interaction):
-        from database import Ticket, Guild
-        from cogs.ticket import yes, no
-
-        modal = TopicModal()
-
-        try:
-            ticket = await Ticket.objects.get(author=interaction.user.id, guild__id=interaction.guild)
-        except orm.NoMatch:
-            try:
-                guild = await Guild.objects.get(id=interaction.guild.id)
-            except orm.NoMatch:
-                await interaction.edit_original_message(view=None)
-                await interaction.response.send_message("You are not in a guild with a ticket system.", ephemeral=True)
-                await self.db.delete()
-                return self.stop()
-
-            await interaction.response.send_modal(modal)
-            await modal.wait()
-        else:
-            channel = self.bot.get_channel(ticket.channel)
-            if not channel:
-                await ticket.delete()
-                return await interaction.response.send_message(
-                    "Your previous ticket was not closed correctly. It has now been deleted, please try again.",
-                    ephemeral=True,
-                )
-            return await interaction.response.send_message(
-                f"You already have a ticket open. <#{ticket.channel}>", ephemeral=True
-            )
-
-        sender = (
-            interaction.response.send_message if interaction.response.is_done() is False else interaction.followup.send
-        )
-
-        if guild.supportEnabled is False:
-            return await sender("The guild has disabled new tickets.", ephemeral=True)
-        category = self.bot.get_channel(guild.ticketCategory)
-        if category is None and guild.ticketCategory is not None:
-            await guild.update(ticketCategory=None)
-            return await sender(
-                "This server is not set up properly. Please ask an administrator to run `/setup`.", ephemeral=True
-            )
-
-        if not category.permissions_for(interaction.guild.me).manage_channels:
-            return await sender(
-                "I do not have permission to manage channels in the ticket category. Please ask an administrator to"
-                f" give me the `Manage Channels` permission in the category {category.name!r}",
-                ephemeral=True,
-            )
-        elif len(category.channels) == 50:
-            return await sender(
-                "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
-            )
-        elif len(category.channels) >= guild.maxTickets:
-            return await sender(
-                "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
-            )
-        else:
-            await sender("Creating ticket...", ephemeral=True)
-            support_roles = list(filter(lambda r: r is not None, map(interaction.guild.get_role, guild.supportRoles)))
-            overwrites = {
-                interaction.guild.default_role: no,
-                interaction.user: yes,
-                interaction.guild.me: yes,
-                **{r: yes for r in support_roles},
-            }
-            try:
-                channel = await category.create_text_channel(
-                    f"ticket-{guild.ticketCounter}",
-                    overwrites=overwrites,
-                    position=0,
-                    reason=f"Ticket created by {interaction.user.name}.",
-                )
-                await channel.edit(topic=modal.topic)
-            except discord.HTTPException as e:
-                return await interaction.edit_original_message(content="Failed to create ticket - {!s}".format(e))
-            try:
-                ticket = await Ticket.objects.create(
-                    localID=guild.ticketCounter,
-                    guild=guild,
-                    channel=channel.id,
-                    author=interaction.user.id,
-                    openedAt=discord.utils.utcnow(),
-                    subject=modal.topic,
-                )
-            except Exception as e:
-                await channel.delete()
-                await sender(content="Failed to create ticket - {!s}".format(e), ephemeral=True)
-                raise
-            else:
-                await guild.update(ticketCounter=guild.ticketCounter + 1)
-                if guild.pingSupportRoles:
-                    paginator = commands.Paginator(prefix="", suffix="", max_size=2000)
-                    for role in support_roles:
-                        paginator.add_line(f"{role.mention}")
-                    _pages = [" ".join(page.splitlines()) for page in paginator.pages]
-                    for page in _pages:
-                        await channel.send(page, allowed_mentions=discord.AllowedMentions(roles=True))
-
-                await channel.send(
-                    interaction.user.mention,
-                    embed=discord.Embed(
-                        title="Ticket #{:,}".format(ticket.localID),
-                        description="Subject: {}".format(modal.topic),
-                        colour=discord.Colour.green(),
-                        timestamp=channel.created_at,
-                    ).set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url),
-                )
-                log_channel = self.log_channel(guild)
-                if log_channel is not None:
-                    await log_channel.send(
-                        embed=discord.Embed(
-                            title="Ticket #{:,} opened!".format(ticket.localID),
-                            description="Subject: {}".format(modal.topic),
-                            colour=discord.Colour.blurple(),
-                            timestamp=channel.created_at,
-                        )
-                        .set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url)
-                        .add_field(name="Jump to channel", value=channel.mention)
-                    )
-                return await sender(content="Ticket created! {}".format(channel.mention), ephemeral=True)

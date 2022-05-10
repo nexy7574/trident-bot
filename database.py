@@ -48,14 +48,3 @@ class Tag(orm.Model):
         "owner": orm.BigInteger(),
         "uses": orm.Integer(default=0),
     }
-
-
-class PersistentButtons(orm.Model):
-    tablename = "buttons"
-    registry = registry
-    fields = {
-        "id": orm.BigInteger(primary_key=True, default=discord.utils.generate_snowflake),
-        "guild": orm.ForeignKey(Guild, on_delete="CASCADE"),
-        "channel": orm.BigInteger(),
-        "message": orm.BigInteger(),
-    }

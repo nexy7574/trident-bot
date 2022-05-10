@@ -1,4 +1,5 @@
 import asyncio
+import textwrap
 from typing import Optional
 
 import discord
@@ -53,6 +54,14 @@ class TicketCog(commands.Cog):
             await modal.wait()
             topic = modal.topic
         else:
+            if len(topic) >= 600:
+                return await ctx.respond(
+                    content="The topic must be less than 600 characters.", ephemeral=True
+                )
+            elif len(topic) < 2:
+                return await ctx.respond(
+                    content="The topic must be at least 2 characters.", ephemeral=True
+                )
             await ctx.defer(ephemeral=True)  # Show loading until we can actually respond
 
         # First, we need to check to see if the guild has set the bot up. We see this by checking if the guild has an
@@ -252,7 +261,16 @@ class TicketCog(commands.Cog):
     @tickets_group.command(name="close")
     @discord.guild_only()
     @commands.max_concurrency(1, commands.BucketType.channel, wait=False)
-    async def close(self, ctx: discord.ApplicationContext, reason: str = "No reason provided."):
+    async def close(
+        self,
+        ctx: discord.ApplicationContext,
+        reason: discord.Option(
+            str,
+            default="No reason provided.",
+            max_value=1500,
+            description="The reason this ticket was closed.",
+        ),
+    ):
         """Closes this ticket. Support or author only."""
         try:
             ticket = await Ticket.objects.get(channel=ctx.channel.id)
@@ -268,13 +286,23 @@ class TicketCog(commands.Cog):
 
         log_channel = self.log_channel(ticket.guild)
         if log_channel:
+            reason = textwrap.shorten(reason, width=1500, placeholder="...")
             await log_channel.send(
                 f"Ticket #{ticket.localID} closed by {ctx.author.mention}.",
                 embed=discord.Embed(
-                    description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\n" f"Reason: {reason}",
+                    description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\nReason: {reason}",
                     colour=discord.Colour.greyple(),
                     timestamp=discord.utils.utcnow(),
-                ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
+                )
+                .set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
+                .add_field(
+                    name="Ticket info",
+                    value=f"Author: <@{ticket.author}> (`{ticket.author}`)\n"
+                    f"Opened: {discord.utils.format_dt(discord.utils.snowflake_time(ticket.id), 'R')}\n"
+                    f"Subject:\n>>> {ticket.subject}",
+                    inline=False,
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
             )
             await ctx.respond("Logged ticket. Closing now!")
         else:

@@ -7,7 +7,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-from database import registry, PersistentButtons
+from database import registry
 
 
 class Bot(commands.Bot):
@@ -35,15 +35,6 @@ class Bot(commands.Bot):
         self.started_at = None
 
     async def start(self, token: str, *, reconnect: bool = True) -> None:
-        from views import PersistentCreateTicketButtonView
-
-        persistent_buttons = await PersistentButtons.objects.all()
-        for button in persistent_buttons:
-            view = PersistentCreateTicketButtonView(self, button)
-            self.add_view(
-                view,
-                message_id=button.message,
-            )
         self.started_at = discord.utils.utcnow()
         return await super().start(token, reconnect=reconnect)
 
