@@ -1,3 +1,4 @@
+import re
 from typing import List, Callable, Tuple, Optional
 
 import discord
@@ -43,6 +44,9 @@ class ChannelSelectorView(View):
 
         async def callback(self, interaction: discord.Interaction):
             self.view.chosen = self.values[0]
+            await interaction.response.send_message(
+                f"Selected <#{self.view.chosen}>. You can dismiss this message.", ephemeral=True
+            )
             self.view.stop()
 
     def __init__(self, channel_getter: Callable[[], List[discord.abc.GuildChannel]], channel_type: str = "category"):
@@ -86,6 +90,10 @@ class RoleSelectorView(View):
 
         async def callback(self, interaction: discord.Interaction):
             self.view.roles = list(map(int, self.values))
+            await interaction.response.send_message(
+                f"Selected {len(self.view.roles)} roles. You can dismiss this message.", ephemeral=True
+            )
+
             self.view.stop()
 
     class SearchRoles(Modal):
@@ -195,33 +203,67 @@ class ServerConfigView(View):
             paginator.add_line(f"{role.mention} - {role.name} - `{role.id}`")
 
         self.paginator = pages.Paginator([discord.Embed(description=page) for page in paginator.pages])
-        self.modify_support_ping_button()
+        self.modify_button(1, manual=self.config.pingSupportRoles is False)
+        self.modify_button(2, manual=self.config.supportEnabled is False)
 
-    def modify_support_ping_button(self):
-        if self.config.pingSupportRoles:
-            self.children[1].label = self.children[1].label.replace("on", "off")
-            self.children[1].style = discord.ButtonStyle.red
+    # noinspection PyTypeChecker
+    def modify_button(self, index: int, *, manual: bool = None):
+        styles = {
+            True: discord.ButtonStyle.red,
+            False: discord.ButtonStyle.green,
+        }
+
+        def replace(btn: Button, before: str = "on", after: str = "off"):
+            return re.sub(
+                r"\s%s$" % re.escape(before),
+                " " + after,
+                btn.label
+            )
+
+        if manual in [True, False]:
+            # manual = False - option will be changed to enable
+            # manual = True - option will be changed to disable
+            # manual = None - option will be changed to the opposite of what it is now
+            order = ("on", "off") if manual is False else ("off", "on")
+            self.children[index].label = replace(self.children[index], *order)
+            self.children[index].style = styles[not manual]
         else:
-            self.children[1].label = self.children[1].label.replace("off", "on")
-            self.children[1].style = discord.ButtonStyle.green
+            order = ("on", "off") if self.children[index].label.endswith("on") else ("off", "on")
+            self.children[index].label = replace(self.children[index], *order)
+            self.children[index].style = styles[order[0] == "on"]
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user == self.ctx.user and await super().interaction_check(interaction)
 
-    @button(label="View support roles")
+    @button(label="View support roles", emoji="\N{books}", style=discord.ButtonStyle.blurple)
     async def do_view_roles(self, _, interaction: discord.Interaction):
         await self.paginator.respond(interaction, ephemeral=True)
 
-    @button(label="Turn support ping on")
+    @button(label="Turn support ping on", emoji="\N{inbox tray}")
     async def toggle_support_ping(self, _, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         old = self.config.pingSupportRoles
         await self.config.update(pingSupportRoles=not self.config.pingSupportRoles)
-        self.modify_support_ping_button()
-        await interaction.edit_original_message(view=self)
+        self.modify_button(1)
+        # noinspection PyTypeChecker
+        self.ctx.bot.loop.create_task(self.ctx.edit(view=self))
         if old:
-            return await interaction.response.send_message("Support ping roles have been turned off.", ephemeral=True)
+            return await interaction.followup.send("Support ping roles have been turned off.", ephemeral=True)
         else:
-            return await interaction.response.send_message("Support ping roles have been turned on.", ephemeral=True)
+            return await interaction.followup.send("Support ping roles have been turned on.", ephemeral=True)
+
+    @button(label="Turn ticket creation on", emoji="\N{ticket}")
+    async def toggle_ticket_creation(self, _, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        old = self.config.supportEnabled
+        await self.config.update(supportEnabled=not self.config.supportEnabled)
+        self.modify_button(2)
+        # noinspection PyTypeChecker
+        self.ctx.bot.loop.create_task(self.ctx.edit(view=self))
+        if old:
+            return await interaction.followup.send("Ticket creation has been turned off.", ephemeral=True)
+        else:
+            return await interaction.followup.send("Ticket creation has been turned on.", ephemeral=True)
 
 
 class PersistentCreateTicketButtonView(View):

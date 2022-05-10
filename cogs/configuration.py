@@ -81,6 +81,7 @@ class ConfigurationCog(commands.Cog):
         embed.add_field(name="Support roles:", value=str(len(guild.supportRoles)))
         embed.add_field(name="Ping support roles:", value="Yes" if guild.pingSupportRoles else "No")
         embed.add_field(name="Max open tickets:", value=str(guild.maxTickets))
+        embed.add_field(name="Ticket creation enabled:", value="Yes" if guild.supportEnabled else "No")
         embed.set_footer(text="Server ID: {}".format(guild.id))
         view = ServerConfigView(ctx, guild, *guild.supportRoles)
         await ctx.respond(embed=embed, view=view)
@@ -195,13 +196,13 @@ class ConfigurationCog(commands.Cog):
     @config_group.command(name="new-tickets-enabled")
     @discord.default_permissions(manage_channels=True)
     async def set_support_enabled(
-            self,
-            ctx: discord.ApplicationContext,
-            enabled: discord.Option(
-                bool,
-                default=None,
-                description="If True, this will allow new tickets to be created. Blank toggles current setting."
-            )
+        self,
+        ctx: discord.ApplicationContext,
+        enabled: discord.Option(
+            bool,
+            default=None,
+            description="If True, this will allow new tickets to be created. Blank toggles current setting.",
+        ),
     ):
         """Enables or disables new ticket creation"""
         try:

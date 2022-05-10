@@ -36,6 +36,7 @@ class Bot(commands.Bot):
 
     async def start(self, token: str, *, reconnect: bool = True) -> None:
         from views import PersistentCreateTicketButtonView
+
         persistent_buttons = await PersistentButtons.objects.all()
         for button in persistent_buttons:
             view = PersistentCreateTicketButtonView(self, button)
