@@ -55,13 +55,9 @@ class TicketCog(commands.Cog):
             topic = modal.topic
         else:
             if len(topic) >= 600:
-                return await ctx.respond(
-                    content="The topic must be less than 600 characters.", ephemeral=True
-                )
+                return await ctx.respond(content="The topic must be less than 600 characters.", ephemeral=True)
             elif len(topic) < 2:
-                return await ctx.respond(
-                    content="The topic must be at least 2 characters.", ephemeral=True
-                )
+                return await ctx.respond(content="The topic must be at least 2 characters.", ephemeral=True)
             await ctx.defer(ephemeral=True)  # Show loading until we can actually respond
 
         # First, we need to check to see if the guild has set the bot up. We see this by checking if the guild has an
@@ -230,6 +226,65 @@ class TicketCog(commands.Cog):
     @discord.guild_only()
     async def remove_member(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Removes a member from this ticket. Support only."""
+        try:
+            ticket = await Ticket.objects.get(channel=ctx.channel.id)
+        except orm.NoMatch:
+            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
+        if member.id == ticket.author:
+            return await ctx.respond("No.", ephemeral=True)
+
+        await ticket.guild.load()
+
+        if not self.is_support(ticket.guild, ctx.author) and member != ctx.author:
+            return await ctx.respond(content="You are not a support member.", ephemeral=True)
+
+        if not ctx.channel.permissions_for(ctx.me).manage_permissions:
+            return await ctx.respond(content="I don't have permission to remove members.", ephemeral=True)
+
+        if member == ctx.user:
+            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Left.")
+            return await ctx.respond(f"\N{outbox tray} {member.mention} left the ticket.")
+        elif not self.is_support(ticket.guild, member):
+            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Removed.")
+            return await ctx.respond(f"\N{outbox tray} {member.mention} was removed from the ticket.")
+
+        return await ctx.respond(
+            "If you want someone to leave a ticket, please ask them to run this command themself.\n"
+            "It is too hard to moderate staff removing each other, so to prevent abuse, this cannot happen at all.",
+            ephemeral=True,
+        )
+
+    # @commands.user_command(name="Add to a ticket")
+    # @discord.guild_only()
+    # async def add_member_from_list(self, ctx: discord.ApplicationContext, member: discord.Member):
+    #     await ctx.defer(ephemeral=True)
+    #     tickets = await Ticket.objects.filter(guild__id=ctx.guild.id).all()
+    #     await tickets[0].guild.load()
+    #     if not self.is_support(tickets[0].guild, ctx.author):
+    #         return await ctx.respond(content="You are not a support member.", ephemeral=True)
+    #     else:
+    #         for ticket in tickets:
+    #             await ticket.load()
+    #
+    #     def channel_getter():
+    #         found = []
+    #         for _t in tickets:
+    #             channel = self.bot.get_channel(_t.channel)
+    #             if channel is not None:
+    #                 found.append(channel)
+    #         return found
+    #
+    #     if ctx.channel.permissions_for(member).read_messages:
+    #         return await ctx.respond(content="{} is already in this ticket.".format(member.mention), ephemeral=True)
+    #     if not ctx.channel.permissions_for(ctx.me).manage_permissions:
+    #         return await ctx.respond(content="I don't have permission to add members.", ephemeral=True)
+    #     await ctx.channel.set_permissions(member, overwrite=yes, reason=f"Added by {ctx.author}")
+    #     await ctx.respond(content="\N{inbox tray} {} has been added to this ticket. Say hi!".format(member.mention))
+
+    @commands.user_command(name="Remove from current ticket")
+    @discord.guild_only()
+    async def remove_member_from_list(self, ctx: discord.ApplicationContext, member: discord.Member):
+        await ctx.defer(ephemeral=True)
         try:
             ticket = await Ticket.objects.get(channel=ctx.channel.id)
         except orm.NoMatch:

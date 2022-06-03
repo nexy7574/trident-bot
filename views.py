@@ -24,6 +24,7 @@ class View(BaseView):
         finally:
             await super().on_error(error, item, interaction)
 
+
 class TopicModal(Modal):
     def __init__(self):
         super().__init__(title="Enter a topic for your ticket")
@@ -93,9 +94,7 @@ class ChannelSelectorView(View):
 
     def channel_getter(self) -> List[discord.abc.GuildChannel]:
         original = self._channel_getter()
-        assert original is not None, "Channel getter returned None"
         if self.search_term is not None:
-            found = [c for c in original if self.search_term.lower().strip() in c.name.lower().strip()]
             return [c for c in original if self.search_term.lower().strip() in c.name.lower().strip()]
         return original
 
