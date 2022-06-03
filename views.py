@@ -28,8 +28,8 @@ class TopicModal(Modal):
 
 class ChannelSelectorView(View):
     class Selector(Select):
-        def __init__(self, channels: List[discord.abc.GuildChannel], channel_type: str):
-            super().__init__(placeholder="Select a category")
+        def __init__(self, channels: List[discord.abc.GuildChannel], channel_type: str, is_filtered: bool = False):
+            super().__init__(placeholder="Select a category" + (" (filtered)" if is_filtered else ""))
             self.channel_type = channel_type
             for category in list(sorted(channels, key=lambda x: x.position))[:25]:
                 emojis = {
@@ -46,18 +46,71 @@ class ChannelSelectorView(View):
             await interaction.response.defer(invisible=True)
             self.view.stop()
 
+    class SearchChannels(Modal):
+        def __init__(self):
+            super().__init__(title="Enter a search term (empty to clear)")
+            self.add_item(
+                InputText(
+                    label="Search term:",
+                    placeholder="e.g. 'gen' will display all channels with 'gen' in their name",
+                    min_length=1,
+                    max_length=100,
+                    required=False,
+                )
+            )
+            self.term = None
+
+        async def callback(self, interaction: discord.Interaction):
+            self.term = self.children[0].value
+            await interaction.response.defer(invisible=True)
+            self.stop()
+
     def __init__(self, channel_getter: Callable[[], List[discord.abc.GuildChannel]], channel_type: str = "category"):
         super().__init__()
         self.chosen = None
-        self.channel_getter = channel_getter
+        self._channel_getter = channel_getter
         self.channel_type = channel_type
-        self.add_item(self.Selector(self.channel_getter(), self.channel_type))
+        self.search_term = None
+        self.add_item(self.create_selector())
+
+    def channel_getter(self) -> List[discord.abc.GuildChannel]:
+        original = self._channel_getter()
+        assert original is not None, "Channel getter returned None"
+        if self.search_term is not None:
+            found = [c for c in original if self.search_term.lower().strip() in c.name.lower().strip()]
+            return [c for c in original if self.search_term.lower().strip() in c.name.lower().strip()]
+        return original
+
+    def create_selector(self):
+        return self.Selector(self.channel_getter(), self.channel_type, self.search_term is not None)
 
     @button(label="Refresh", emoji="\U0001f504", style=discord.ButtonStyle.blurple)
     async def do_refresh(self, _, interaction: discord.Interaction):
-        self.remove_item(self.children[1])
-        self.add_item(self.Selector(self.channel_getter(), self.channel_type))
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                self.remove_item(child)
+        self.add_item(self.create_selector())
         await interaction.response.defer(invisible=True)
+        await interaction.edit_original_message(view=self)
+
+    @button(label="Search", emoji="\U0001f50d")
+    async def do_select_via_name(self, _, interaction: discord.Interaction):
+        modal = self.SearchChannels()
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+        self.search_term = modal.term
+        if len(self.channel_getter()) == 0:
+            self.search_term = None
+            await interaction.followup.send(
+                "No channels match the criteria %r. Try again." % modal.term, ephemeral=True
+            )
+            return
+        for child in self.children:
+            if isinstance(child, discord.ui.Select):
+                self.remove_item(child)
+                break
+        new = self.create_selector()
+        self.add_item(new)
         await interaction.edit_original_message(view=self)
 
     @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
@@ -140,7 +193,7 @@ class RoleSelectorView(View):
         await interaction.response.send_modal(modal)
         await modal.wait()
         if len(self.get_roles()) == 0:
-            await interaction.response.send_message("No roles match that criteria. Try again.", ephemeral=True)
+            await interaction.followup.send("No roles match that criteria. Try again.", ephemeral=True)
             return
         self.search_term = modal.term
         self.remove_item(self.children[2])
