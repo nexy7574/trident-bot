@@ -29,7 +29,7 @@ class TopicModal(Modal):
 class ChannelSelectorView(View):
     class Selector(Select):
         def __init__(self, channels: List[discord.abc.GuildChannel], channel_type: str, is_filtered: bool = False):
-            super().__init__(placeholder="Select a category" + (" (filtered)" if is_filtered else ""))
+            super().__init__(placeholder="Select a %s%s" % (channel_type, (" (filtered)" if is_filtered else "")))
             self.channel_type = channel_type
             for category in list(sorted(channels, key=lambda x: x.position))[:25]:
                 emojis = {
