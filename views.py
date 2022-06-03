@@ -22,7 +22,7 @@ class TopicModal(Modal):
 
     async def callback(self, interaction: discord.Interaction):
         self.topic = self.children[0].value
-        await interaction.response.send_message("Input successful. You can dismiss this message.", ephemeral=True)
+        await interaction.response.defer(invisible=True)
         self.stop()
 
 
@@ -43,9 +43,7 @@ class ChannelSelectorView(View):
 
         async def callback(self, interaction: discord.Interaction):
             self.view.chosen = self.values[0]
-            await interaction.response.send_message(
-                f"Selected <#{self.view.chosen}>. You can dismiss this message.", ephemeral=True
-            )
+            await interaction.response.defer(invisble=True)
             self.view.stop()
 
     def __init__(self, channel_getter: Callable[[], List[discord.abc.GuildChannel]], channel_type: str = "category"):
@@ -59,8 +57,8 @@ class ChannelSelectorView(View):
     async def do_refresh(self, _, interaction: discord.Interaction):
         self.remove_item(self.children[1])
         self.add_item(self.Selector(self.channel_getter(), self.channel_type))
+        await interaction.response.defer(invisble=True)
         await interaction.edit_original_message(view=self)
-        await interaction.response.send_message("Refreshed options.", ephemeral=True, delete_after=0.1)
 
     @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
     async def do_cancel(self, _, __):
@@ -89,10 +87,7 @@ class RoleSelectorView(View):
 
         async def callback(self, interaction: discord.Interaction):
             self.view.roles = list(map(int, self.values))
-            await interaction.response.send_message(
-                f"Selected {len(self.view.roles)} roles. You can dismiss this message.", ephemeral=True
-            )
-
+            await interaction.response.defer(invisible=True)
             self.view.stop()
 
     class SearchRoles(Modal):
@@ -111,9 +106,7 @@ class RoleSelectorView(View):
 
         async def callback(self, interaction: discord.Interaction):
             self.term = self.children[0].value
-            await interaction.response.send_message(
-                "Set search term to {!r}".format(self.term or "<none>"), ephemeral=True
-            )
+            await interaction.response.defer(invisible=True)
             self.stop()
 
     def __init__(self, roles_getter: Callable[[], List[discord.Role]], ranges: Tuple[int, int] = (1, 1)):
@@ -138,8 +131,8 @@ class RoleSelectorView(View):
         self.remove_item(self.children[2])
         new = self.create_selector()
         self.add_item(new)
+        await interaction.response.defer(invisible=True)
         await interaction.edit_original_message(view=self)
-        await interaction.response.send_message("Refreshed options.", ephemeral=True, delete_after=0.1)
 
     @button(label="Search", emoji="\U0001f50d")
     async def do_select_via_name(self, _, interaction: discord.Interaction):

@@ -1,0 +1,4 @@
+git+https://github.com/pycord-development/pycord
+orm[sqlite]
+jishkucord
+humanize
