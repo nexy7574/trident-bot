@@ -43,7 +43,7 @@ class ChannelSelectorView(View):
 
         async def callback(self, interaction: discord.Interaction):
             self.view.chosen = self.values[0]
-            await interaction.response.defer(invisble=True)
+            await interaction.response.defer(invisible=True)
             self.view.stop()
 
     def __init__(self, channel_getter: Callable[[], List[discord.abc.GuildChannel]], channel_type: str = "category"):
@@ -57,7 +57,7 @@ class ChannelSelectorView(View):
     async def do_refresh(self, _, interaction: discord.Interaction):
         self.remove_item(self.children[1])
         self.add_item(self.Selector(self.channel_getter(), self.channel_type))
-        await interaction.response.defer(invisble=True)
+        await interaction.response.defer(invisible=True)
         await interaction.edit_original_message(view=self)
 
     @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
@@ -163,7 +163,7 @@ class ConfirmView(View):
             self.positive = positive
 
         async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer()
+            await interaction.response.defer(invisible=True)
             self.view.chosen = self.positive
             self.view.stop()
 
