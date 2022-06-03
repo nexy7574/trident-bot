@@ -3,8 +3,26 @@ from typing import List, Callable, Tuple, Optional
 
 import discord
 from discord.ext import commands, pages
-from discord.ui import View, Select, button, Modal, InputText, Button
+from discord.ui import View as BaseView, Select, button, Modal, InputText, Button
 
+
+class View(BaseView):
+    async def on_timeout(self) -> None:
+        self.disable_all_items()
+        if hasattr(self, "message"):
+            if self.message is not None:
+                try:
+                    await self.message.edit(view=self)
+                except discord.HTTPException:
+                    pass
+
+    async def on_error(self, error: Exception, item: discord.ui.Item, interaction: discord.Interaction) -> None:
+        try:
+            await interaction.followup.send(f"Error while processing interaction: {error}", ephemeral=True)
+        except discord.HTTPException:
+            pass
+        finally:
+            await super().on_error(error, item, interaction)
 
 class TopicModal(Modal):
     def __init__(self):
