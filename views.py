@@ -1,20 +1,37 @@
+import asyncio
+import json
+import os
 import re
+import textwrap
 from typing import List, Callable, Tuple, Optional
 
 import discord
 from discord.ext import commands, pages
 from discord.ui import View as BaseView, Select, button, Modal, InputText, Button
 
+from database import Question, Guild
+
 
 class View(BaseView):
     async def on_timeout(self) -> None:
+        message = None
         self.disable_all_items()
+
         if hasattr(self, "message"):
             if self.message is not None:
-                try:
-                    await self.message.edit(view=self)
-                except discord.HTTPException:
-                    pass
+                message = self.message
+        if message is None and hasattr(self, "ctx"):
+            self.ctx: discord.ApplicationContext
+            try:
+                message = self.ctx.message or await self.ctx.interaction.original_message()
+            except discord.HTTPException:
+                pass
+
+        if message is not None:
+            try:
+                await message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
     async def on_error(self, error: Exception, item: discord.ui.Item, interaction: discord.Interaction) -> None:
         try:
@@ -24,24 +41,31 @@ class View(BaseView):
         finally:
             await super().on_error(error, item, interaction)
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if hasattr(self, "ctx"):
+            return interaction.user == self.ctx.user
 
-class TopicModal(Modal):
-    def __init__(self):
-        super().__init__(title="Enter a topic for your ticket")
-        self.add_item(
-            InputText(
-                label="Why are you opening this ticket?",
-                placeholder="This thing does that when it shouldn't.......",
-                min_length=2,
-                max_length=600,
-                required=False,
+
+class ModalSelect(discord.ui.Select):
+    def refresh_state(self, data) -> None:
+        data: ComponentInteractionData = data  # type: ignore
+        self._selected_values = data.get("values", [])
+
+
+class QuestionsModal(Modal):
+    def __init__(self, questions: List[Question]):
+        super().__init__(title="Just a few questions first...")
+        for q in questions:
+            self.add_item(
+                InputText(
+                    style=discord.InputTextStyle.long if q["max_length"] > 50 else discord.InputTextStyle.short, **q
+                )
             )
-        )
-        self.topic = None
+        self.answers = []
 
     async def callback(self, interaction: discord.Interaction):
-        self.topic = self.children[0].value
-        await interaction.response.defer(invisible=True)
+        self.answers = [x.value or "" for x in self.children]
+        await interaction.response.defer()
         self.stop()
 
 
@@ -130,7 +154,7 @@ class ChannelSelectorView(View):
         self.add_item(new)
         await interaction.edit_original_message(view=self)
 
-    @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
+    @button(label="Cancel", emoji="\N{black square for stop}", style=discord.ButtonStyle.red)
     async def do_cancel(self, _, __):
         self.stop()
 
@@ -218,7 +242,7 @@ class RoleSelectorView(View):
         self.add_item(new)
         await interaction.edit_original_message(view=self)
 
-    @button(label="Cancel", emoji="\N{black square for stop}\U0000fe0f", style=discord.ButtonStyle.red)
+    @button(label="Cancel", emoji="\N{black square for stop}", style=discord.ButtonStyle.red)
     async def do_cancel(self, _, __):
         self.stop()
 
@@ -253,8 +277,8 @@ class ConfirmView(View):
 
 # noinspection PyUnresolvedReferences
 class ServerConfigView(View):
-    def __init__(self, ctx: discord.ApplicationContext, config, *role_ids: int):
-        super().__init__()
+    def __init__(self, ctx: discord.ApplicationContext, config: Guild, *role_ids: int):
+        super().__init__(timeout=15 * 60)
         self.ctx = ctx
         self.config = config
         self.role_ids = role_ids
@@ -290,9 +314,6 @@ class ServerConfigView(View):
             self.children[index].label = replace(self.children[index], *order)
             self.children[index].style = styles[order[0] == "on"]
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return interaction.user == self.ctx.user and await super().interaction_check(interaction)
-
     @button(label="View support roles", emoji="\N{books}", style=discord.ButtonStyle.blurple)
     async def do_view_roles(self, _, interaction: discord.Interaction):
         await self.paginator.respond(interaction, ephemeral=True)
@@ -322,3 +343,301 @@ class ServerConfigView(View):
             return await interaction.followup.send("Ticket creation has been turned off.", ephemeral=True)
         else:
             return await interaction.followup.send("Ticket creation has been turned on.", ephemeral=True)
+
+    @button(label="Manage new ticket questions", emoji="\U000023ec")
+    async def modify_ticket_questions(self, _, interaction: discord.Interaction):
+        await interaction.response.defer()
+        view = TicketQuestionManagerView(self.ctx, self.config)
+        await interaction.edit_original_message(view=view)
+        await view.wait()
+        await interaction.edit_original_message(view=self)
+
+
+class TicketQuestionManagerView(View):
+    children: List[discord.ui.Button]
+
+    def __init__(self, ctx: discord.ApplicationContext, config: Guild):
+        self.ctx = ctx
+        self.config = config
+        super().__init__()
+
+    async def on_error(self, error: Exception, item: discord.ui.Item, interaction: discord.Interaction) -> None:
+        fmt = json.dumps(self.to_components(), indent=4)
+        paginator = commands.Paginator("```json")
+        for line in fmt.splitlines():
+            paginator.add_line(line)
+
+        for page in paginator.pages:
+            await self.ctx.send(page)
+
+    @button(label="Create new question", emoji="\N{heavy plus sign}", style=discord.ButtonStyle.green)
+    async def create_new_question(self, btn: discord.ui.Button, interaction: discord.Interaction):
+        if len(self.config.questions) == 5:
+            btn.disabled = True
+            await interaction.edit_original_message(view=self)
+            return await interaction.response.send_message(
+                "\N{cross mark} You already have 5 questions, which is the maximum number of questions we can put in a"
+                " popup. Please remove a question, or edit one."
+            )
+        modal = CreateNewQuestionModal()
+        question = await modal.run(interaction)
+        new_questions = self.config.questions
+        new_questions.append(question)
+        await self.config.update(questions=new_questions)
+        await interaction.edit_original_message(
+            content=f"\N{white heavy check mark} {os.urandom(3).hex()} | Added new question!"
+        )
+
+    @button(label="Preview questions", emoji="\U0001f50d")
+    async def preview_questions(self, _, interaction: discord.Interaction):
+        if len(self.config.questions) == 0:
+            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{heavy plus sign}")])
+            await interaction.edit_original_message(view=self)
+            return await interaction.response.send_message(
+                "\N{cross mark} You do not have any questions set. Please create one."
+            )
+        modal = QuestionsModal(self.config.questions)
+        await interaction.response.send_modal(modal)
+        try:
+            await asyncio.wait_for(modal.wait(), timeout=600)
+        except asyncio.TimeoutError:
+            pass
+        else:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    description="Your answers to your questions:",
+                    colour=discord.Colour.blurple(),
+                    fields=[
+                        discord.EmbedField(
+                            name=self.config.questions[n]["label"][:256],
+                            value=modal.answers[n][:1024] or "empty",
+                            inline=False,
+                        )
+                        for n in range(len(modal.answers))
+                    ],
+                ),
+                ephemeral=True,
+            )
+
+    @button(label="Edit existing question", emoji="\N{pencil}", disabled=True)
+    async def edit_existing_question(self, _, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if len(self.config.questions) == 0:
+            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{heavy plus sign}")])
+            await interaction.edit_original_message(view=self)
+            return await interaction.response.send_message(
+                "\N{cross mark} You do not have any questions set. Please create one."
+            )
+        view = EditQuestionView(self.ctx, self.config)
+        await interaction.edit_original_message(view=view)
+        await view.wait()
+        await interaction.edit_original_message(view=self)
+
+    @button(label="Remove existing question", emoji="\N{heavy minus sign}", style=discord.ButtonStyle.red)
+    async def remove_existing_question(self, _, interaction: discord.Interaction):
+        await interaction.response.defer()
+        if len(self.config.questions) == 0:
+            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{heavy plus sign}")])
+            await interaction.edit_original_message(view=self)
+            return await interaction.response.send_message(
+                "\N{cross mark} You do not have any questions set. Please create one."
+            )
+        view = RemoveQuestionView(self.ctx, self.config)
+        await interaction.edit_original_message(view=view)
+        await view.wait()
+        if len(self.config.questions) > 0:
+            self.enable_all_items()
+        await interaction.edit_original_message(view=self)
+
+    @button(label="Finish", style=discord.ButtonStyle.primary, emoji="\U000023f9")
+    async def finish(self, _, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.stop()
+
+
+class CreateNewQuestionModal(Modal):
+    def __init__(self, *, data: Question = None):
+        data = data or {}
+        # noinspection PyTypeChecker
+        super().__init__(
+            discord.ui.InputText(
+                label="The question:",
+                custom_id="label",
+                placeholder="e.g: Why are you requesting support?",
+                min_length=2,
+                max_length=45,
+                required=True,
+                value=data.get("label"),
+            ),
+            discord.ui.InputText(
+                label="Placeholder text:",
+                custom_id="placeholder",
+                placeholder="This is the text that looks like this",
+                required=False,
+                max_length=100,
+                value=data.get("placeholder"),
+            ),
+            discord.ui.InputText(
+                label="Minimum answer length:",
+                custom_id="min_length",
+                placeholder="Blank if no minimum length or not required",
+                max_length=4,
+                required=False,
+                value=(lambda v: str(v) if v is not None else None)(data.get("min_length")),
+            ),
+            discord.ui.InputText(
+                label="Maximum answer length:",
+                custom_id="max_length",
+                placeholder="Maximum is 1024",
+                min_length=1,
+                max_length=4,
+                required=True,
+                value=(lambda v: str(v) if v is not None else None)(data.get("min_length", 1024)),
+            ),
+            ModalSelect(
+                custom_id="required",
+                options=[
+                    discord.SelectOption(
+                        label="Answer required",
+                        value="True",
+                        description="This question requires an answer",
+                        emoji="\N{white heavy check mark}",
+                        default=True,
+                    ),
+                    discord.SelectOption(
+                        label="Answer not required",
+                        value="False",
+                        description="This question does not require an answer",
+                        emoji="\N{cross mark}",
+                    ),
+                ],
+            ),
+            title=f"{'Create' if bool(len(data)) is False else 'Edit'} a question:",
+        )
+        self._unprocessed = data or {"label": "", "placeholder": "", "min_length": "", "max_length": "", "required": ""}
+        # For some reason, the dropdown is causing issues when editing or removing.
+        if bool(len(data)) is not False:
+            self.remove_item(self.children[-1])
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        for child in self.children:
+            if hasattr(child, "values"):
+                self._unprocessed[child.custom_id] = child.values[0]
+            else:
+                self._unprocessed[child.custom_id] = child.value
+        self.stop()
+
+    async def run(self, interaction: discord.Interaction) -> Question:
+        def try_int(value: str) -> Optional[int]:
+            try:
+                return max(1, int(value))
+            except ValueError:
+                return
+
+        await interaction.response.send_modal(self)
+        await self.wait()
+        processed = Question(
+            **{
+                "label": self._unprocessed["label"],
+                "placeholder": self._unprocessed["placeholder"] or None,
+                "required": self._unprocessed["required"] == "True",
+                "min_length": try_int(self._unprocessed["min_length"]),
+                "max_length": try_int(self._unprocessed["max_length"]),
+            }
+        )
+        if processed["max_length"] and processed["max_length"] > 1024:
+            processed["max_length"] = 1024
+        if processed["min_length"] and processed["min_length"] > (processed["max_length"] or 1024):
+            processed["min_length"] = None if not processed["max_length"] else processed["mxn_length"] - 2
+        return processed
+
+
+class EditQuestionView(View):
+    def __init__(self, ctx: discord.ApplicationContext, config: Guild):
+        self.ctx = ctx
+        self.config = config
+        super().__init__(timeout=600)
+        self.add_item(
+            discord.ui.Select(
+                custom_id="selector",
+                placeholder="Choose a question",
+                options=[
+                    discord.SelectOption(
+                        label=f"Question {n+1} "
+                        f"({textwrap.shorten(self.config.questions[n]['label'], 87, placeholder='...')})",
+                        value=str(n),
+                        emoji=str(n + 1) + "\N{variation selector-16}\N{combining enclosing keycap}",
+                    )
+                    for n in range(len(self.config.questions))
+                ],
+            )
+        )
+        discord.utils.get(self.children, custom_id="selector").callback = self.__select_callback()
+
+    def __select_callback(self) -> Callable:
+        # noinspection PyTypeChecker
+        select: discord.ui.Select = discord.utils.get(self.children, custom_id="selector")
+        assert select is not None
+
+        async def callback(interaction: discord.Interaction):
+            index = int(select.values[0])
+            modal = CreateNewQuestionModal(data=self.config.questions[index])
+            new_data = await modal.run(interaction)
+            questions = self.config.questions
+            questions.pop(index)
+            questions.insert(index, new_data)
+            await self.config.update(questions=questions)
+            await interaction.followup.send(f"Edited question #{index}.")
+            self.stop()
+
+        return callback
+
+    @button(label="Cancel", style=discord.ButtonStyle.red, emoji="\U000023f9")
+    async def cancel(self, _, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.stop()
+
+
+class RemoveQuestionView(View):
+    def __init__(self, ctx: discord.ApplicationContext, config: Guild):
+        self.ctx = ctx
+        self.config = config
+        super().__init__(timeout=600)
+        self.add_item(
+            discord.ui.Select(
+                custom_id="selector",
+                placeholder="Choose a question",
+                options=[
+                    discord.SelectOption(
+                        label=f"Question {n + 1} "
+                        f"({textwrap.shorten(self.config.questions[n]['label'], 87, placeholder='...')})",
+                        value=str(n),
+                        emoji=str(n + 1) + "\N{variation selector-16}\N{combining enclosing keycap}",
+                    )
+                    for n in range(len(self.config.questions))
+                ],
+            )
+        )
+        discord.utils.get(self.children, custom_id="selector").callback = self.__select_callback()
+
+    def __select_callback(self) -> Callable:
+        # noinspection PyTypeChecker
+        select: discord.ui.Select = discord.utils.get(self.children, custom_id="selector")
+        assert select is not None
+
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            index = int(select.values[0])
+            questions = self.config.questions
+            questions.pop(index)
+            await self.config.update(questions=questions)
+            await interaction.followup.send(f"Deleted question #{index}.")
+            self.stop()
+
+        return callback
+
+    @button(label="Cancel", style=discord.ButtonStyle.red, emoji="\U000023f9")
+    async def cancel(self, _, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.stop()

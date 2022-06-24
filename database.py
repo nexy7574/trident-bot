@@ -1,8 +1,26 @@
+import datetime
+from typing import TYPE_CHECKING, Optional, List, Union, Literal, Dict
+
 import databases
 import discord.utils
 import orm
 
 registry = orm.ModelRegistry(databases.Database("sqlite:///main.db"))
+
+
+if TYPE_CHECKING:
+
+    class Question(dict):
+        label: str
+        placeholder: Optional[str]
+        min_length: Optional[int]
+        max_length: Optional[int]
+        required: bool
+
+else:
+
+    class Question(dict):
+        ...
 
 
 class Guild(orm.Model):
@@ -18,7 +36,30 @@ class Guild(orm.Model):
         "pingSupportRoles": orm.Boolean(default=True),
         "maxTickets": orm.Integer(default=50),
         "supportEnabled": orm.Boolean(default=True),
+        "questions": orm.JSON(
+            default=[
+                {
+                    "label": "Why are you opening this ticket?",
+                    "placeholder": "thing X is supposed to do Y, but it does Z instead.",
+                    "min_length": 2,
+                    "max_length": 600,
+                    "required": True,
+                }
+            ]
+        ),
     }
+
+    if TYPE_CHECKING:
+
+        entry_id: int
+        id: int
+        ticketCounter: int
+        ticketCategory: Optional[int]
+        logChannel: Optional[int]
+        supportRoles: List[int]
+        pingSupportRoles: bool
+        maxTickets: int
+        questions: List[Question]
 
 
 class Ticket(orm.Model):
@@ -35,6 +76,16 @@ class Ticket(orm.Model):
         "locked": orm.Boolean(default=False),
     }
 
+    if TYPE_CHECKING:
+        id: int
+        localID: int
+        guild: Guild
+        author: int
+        channel: int
+        subject: Optional[str]
+        openedAt: datetime.datetime
+        locked: bool
+
 
 class Tag(orm.Model):
     tablename = "tags"
@@ -48,3 +99,12 @@ class Tag(orm.Model):
         "owner": orm.BigInteger(),
         "uses": orm.Integer(default=0),
     }
+
+    if TYPE_CHECKING:
+        id: int
+        name: str
+        guild: Guild
+        content: str
+        author: int
+        owner: int
+        uses: int

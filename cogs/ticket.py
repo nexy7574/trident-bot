@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 
 from database import Ticket, Guild, orm
-from views import TopicModal
+from views import QuestionsModal
 
 yes = discord.PermissionOverwrite(
     read_messages=True,
@@ -46,20 +46,8 @@ class TicketCog(commands.Cog):
     @tickets_group.command()
     @discord.guild_only()
     @commands.max_concurrency(1, commands.BucketType.member, wait=False)
-    async def new(self, ctx: discord.ApplicationContext, topic: str = None):
+    async def new(self, ctx: discord.ApplicationContext):
         """Creates a new support ticket in the current server."""
-        if topic is None:
-            modal = TopicModal()
-            await ctx.send_modal(modal)
-            await modal.wait()
-            topic = modal.topic
-        else:
-            if len(topic) >= 600:
-                return await ctx.respond(content="The topic must be less than 600 characters.", ephemeral=True)
-            elif len(topic) < 2:
-                return await ctx.respond(content="The topic must be at least 2 characters.", ephemeral=True)
-            await ctx.defer(ephemeral=True)  # Show loading until we can actually respond
-
         # First, we need to check to see if the guild has set the bot up. We see this by checking if the guild has an
         # entry in the Guilds table
         try:
@@ -114,6 +102,15 @@ class TicketCog(commands.Cog):
                     "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
                 )
             else:
+                questions = QuestionsModal(guild.questions)
+                await ctx.send_modal(questions)
+                try:
+                    await asyncio.wait_for(questions.wait(), timeout=600)
+                except asyncio.TimeoutError:
+                    return
+                else:
+                    answers = questions.answers
+
                 await ctx.respond("Creating ticket...", ephemeral=True)
                 support_roles = list(filter(lambda r: r is not None, map(ctx.guild.get_role, guild.supportRoles)))
                 overwrites = {
@@ -123,13 +120,12 @@ class TicketCog(commands.Cog):
                     **{r: yes for r in support_roles},
                 }
                 try:
-                    channel = await category.create_text_channel(
+                    channel: discord.TextChannel = await category.create_text_channel(
                         f"ticket-{guild.ticketCounter}",
                         overwrites=overwrites,
                         position=0,
                         reason=f"Ticket created by {ctx.author.name}.",
                     )
-                    await channel.edit(topic=topic)
                 except discord.HTTPException as e:
                     return await ctx.edit(content="Failed to create ticket - {!s}".format(e))
                 try:
@@ -139,7 +135,7 @@ class TicketCog(commands.Cog):
                         channel=channel.id,
                         author=ctx.author.id,
                         openedAt=discord.utils.utcnow(),
-                        subject=topic,
+                        subject="deprecated field, will be removed.",
                     )
                 except Exception as e:
                     await channel.delete()
@@ -155,21 +151,29 @@ class TicketCog(commands.Cog):
                         for page in pages:
                             await channel.send(page, allowed_mentions=discord.AllowedMentions(roles=True))
 
+                    answer_embeds = [
+                        discord.Embed(
+                            title=guild.questions[n]["label"], description=answers[n], colour=discord.Colour.green()
+                        )
+                        for n in range(len(answers))
+                    ]
                     await channel.send(
                         ctx.author.mention,
-                        embed=discord.Embed(
-                            title="Ticket #{:,}".format(ticket.localID),
-                            description="Subject: {}".format(topic),
-                            colour=discord.Colour.green(),
-                            timestamp=channel.created_at,
-                        ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
+                        embeds=[
+                            discord.Embed(
+                                title="Ticket #{:,}".format(ticket.localID),
+                                colour=discord.Colour.green(),
+                                timestamp=channel.created_at,
+                            ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
+                            *answer_embeds,
+                        ],
                     )
                     log_channel = self.log_channel(guild)
                     if log_channel is not None:
                         await log_channel.send(
                             embed=discord.Embed(
                                 title="Ticket #{:,} opened!".format(ticket.localID),
-                                description="Subject: {}".format(topic),
+                                description="Subject: {}".format(ticket.subject),
                                 colour=discord.Colour.blurple(),
                                 timestamp=channel.created_at,
                             )

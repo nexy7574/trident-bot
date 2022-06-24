@@ -23,6 +23,7 @@ class ConfigurationCog(commands.Cog):
         }
 
         view = ChannelSelectorView(lambda: ctx.guild.categories, "category")
+        view.ctx = ctx
         await ctx.respond("Select a category to use for tickets.", view=view)
         await view.wait()
         if not view.chosen:
@@ -30,6 +31,7 @@ class ConfigurationCog(commands.Cog):
         db_kwargs["ticketCategory"] = int(view.chosen)
 
         view = ChannelSelectorView(lambda: ctx.guild.text_channels, "channel")
+        view.ctx = ctx
 
         await ctx.edit(content="Please select a channel to send logs to.", view=view)
         await view.wait()
@@ -38,6 +40,7 @@ class ConfigurationCog(commands.Cog):
         db_kwargs["logChannel"] = int(view.chosen)
 
         view = RoleSelectorView(lambda: ctx.guild.roles, (1, 25))
+        view.ctx = ctx
         await ctx.edit(content="Please select roles to assign to tickets. Pick between 1 and 25.", view=view)
         await view.wait()
         if not view.roles:
@@ -45,6 +48,7 @@ class ConfigurationCog(commands.Cog):
         db_kwargs["supportRoles"] = view.roles
 
         view = ConfirmView("Yes", "No")
+        view.ctx = ctx
         await ctx.edit(content="Should aforementioned roles be pinged when a ticket is opened?", view=view)
         await view.wait()
         if view.chosen is None:
