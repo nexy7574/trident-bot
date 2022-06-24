@@ -102,14 +102,17 @@ class TicketCog(commands.Cog):
                     "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
                 )
             else:
-                questions = QuestionsModal(guild.questions)
-                await ctx.send_modal(questions)
-                try:
-                    await asyncio.wait_for(questions.wait(), timeout=600)
-                except asyncio.TimeoutError:
-                    return
+                if guild.questions:
+                    questions = QuestionsModal(guild.questions)
+                    await ctx.send_modal(questions)
+                    try:
+                        await asyncio.wait_for(questions.wait(), timeout=600)
+                    except asyncio.TimeoutError:
+                        return
+                    else:
+                        answers = questions.answers
                 else:
-                    answers = questions.answers
+                    answers = []
 
                 await ctx.respond("Creating ticket...", ephemeral=True)
                 support_roles = list(filter(lambda r: r is not None, map(ctx.guild.get_role, guild.supportRoles)))
