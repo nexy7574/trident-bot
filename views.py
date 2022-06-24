@@ -370,7 +370,17 @@ class TicketQuestionManagerView(View):
         for page in paginator.pages:
             await self.ctx.send(page)
 
-    @button(label="Create new question", emoji="\N{heavy plus sign}", style=discord.ButtonStyle.green)
+        fmt = json.dumps(item.to_component_dict(), indent=4)
+        paginator = commands.Paginator("```json\n// Item specific")
+        for line in fmt.splitlines():
+            paginator.add_line(line)
+
+        for page in paginator.pages:
+            await self.ctx.send(page)
+
+        await super().on_error(error, item, interaction)
+
+    @button(label="Create question", emoji="\N{heavy plus sign}", style=discord.ButtonStyle.green)
     async def create_new_question(self, btn: discord.ui.Button, interaction: discord.Interaction):
         if len(self.config.questions) == 5:
             btn.disabled = True
@@ -419,7 +429,7 @@ class TicketQuestionManagerView(View):
                 ephemeral=True,
             )
 
-    @button(label="Edit existing question", emoji="\N{pencil}", disabled=True)
+    @button(label="Edit question", emoji="\N{pencil}")
     async def edit_existing_question(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
         if len(self.config.questions) == 0:
@@ -429,11 +439,11 @@ class TicketQuestionManagerView(View):
                 "\N{cross mark} You do not have any questions set. Please create one."
             )
         view = EditQuestionView(self.ctx, self.config)
-        await interaction.edit_original_message(view=view)
+        _m = await interaction.followup.send(view=view)
         await view.wait()
-        await interaction.edit_original_message(view=self)
+        await _m.delete(delay=0.1)
 
-    @button(label="Remove existing question", emoji="\N{heavy minus sign}", style=discord.ButtonStyle.red)
+    @button(label="Remove question", emoji="\N{heavy minus sign}", style=discord.ButtonStyle.red)
     async def remove_existing_question(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
         if len(self.config.questions) == 0:
@@ -443,11 +453,12 @@ class TicketQuestionManagerView(View):
                 "\N{cross mark} You do not have any questions set. Please create one."
             )
         view = RemoveQuestionView(self.ctx, self.config)
-        await interaction.edit_original_message(view=view)
+        _m = await interaction.followup.send(view=view)
         await view.wait()
         if len(self.config.questions) > 0:
             self.enable_all_items()
-        await interaction.edit_original_message(view=self)
+            await interaction.edit_original_message(view=self)
+        await _m.delete(delay=0.1)
 
     @button(label="Finish", style=discord.ButtonStyle.primary, emoji="\U000023f9")
     async def finish(self, _, interaction: discord.Interaction):
@@ -588,7 +599,8 @@ class EditQuestionView(View):
             questions.pop(index)
             questions.insert(index, new_data)
             await self.config.update(questions=questions)
-            await interaction.followup.send(f"Edited question #{index}.")
+            await interaction.followup.send(f"Edited question #{index+1}.")
+            await interaction.delete_original_message(delay=0.1)
             self.stop()
 
         return callback
@@ -632,7 +644,8 @@ class RemoveQuestionView(View):
             questions = self.config.questions
             questions.pop(index)
             await self.config.update(questions=questions)
-            await interaction.followup.send(f"Deleted question #{index}.")
+            await interaction.followup.send(f"Deleted question #{index+1}.")
+            await interaction.delete_original_message(delay=0.01)
             self.stop()
 
         return callback
