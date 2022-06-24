@@ -531,7 +531,6 @@ class CreateNewQuestionModal(Modal):
             self.remove_item(self.children[-1])
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(invisible=True)
         for child in self.children:
             if hasattr(child, "values"):
                 self._unprocessed[child.custom_id] = child.values[0]
