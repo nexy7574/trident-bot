@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 
 from database import Guild, orm
-from views import ChannelSelectorView, RoleSelectorView, ConfirmView, ServerConfigView
+from utils.views import ChannelSelectorView, RoleSelectorView, ConfirmView, ServerConfigView
 
 
 class ConfigurationCog(commands.Cog):

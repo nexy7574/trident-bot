@@ -2,3 +2,5 @@ py-cord==2.0.0rc1
 orm[sqlite]
 jishkucord
 humanize
+fastapi
+httpx

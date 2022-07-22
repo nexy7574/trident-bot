@@ -130,6 +130,16 @@ class GeneralCog(commands.Cog):
         embed.set_footer(text="Trident v{}".format(version))
         return await ctx.respond(embed=embed)
 
+    @commands.slash_command()
+    async def help(self, ctx: discord.ApplicationContext, command_name: str = None):
+        """Shows you a list of commands or help on a specific command"""
+        categories = {}
+        for command in self.bot.walk_application_commands():
+            if command.cog is not None:
+                name = command.cog.name
+                if name in categories:
+                    categories[name].append()
+
 
 def setup(bot):
     bot.add_cog(GeneralCog(bot))

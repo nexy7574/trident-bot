@@ -1,13 +1,17 @@
 import asyncio
 import json
 import os
+import random
 from datetime import timedelta
 from pathlib import Path
 
 import discord
+import httpx
 from discord.ext import commands
 
 from database import registry
+from server import run as run_server
+from uvicorn import Server, Config
 
 
 class Bot(commands.Bot):
@@ -33,10 +37,37 @@ class Bot(commands.Bot):
         self.connected_at = None
         self.last_reconnect = None
         self.started_at = None
+        self.session = httpx.AsyncClient()
+
+        self.server = None
+        self.server_task = None
 
     async def start(self, token: str, *, reconnect: bool = True) -> None:
         self.started_at = discord.utils.utcnow()
-        return await super().start(token, reconnect=reconnect)
+        self.server = run_server(self)
+        config = Config(
+            self.server,
+            host=self.server.state.config.get("host", "127.0.0.1"),
+            port=self.server.state.config.get("port", random.randint(2000, 9999)),
+            access_log=not self.server.state.config.get("disable_access_log", False),
+            debug=self.config["debug"],
+        )
+        config.setup_event_loop()
+        _server = Server(config)
+        self.server_task = self.loop.create_task(_server.serve())
+        self.server_task.add_done_callback(lambda x: self.stop())
+        await super().start(token, reconnect=reconnect)
+        print("Waiting for web server to shut down")
+        _server.should_exit = True
+        try:
+            await asyncio.wait_for(self.server_task, timeout=20)
+        except asyncio.TimeoutError:
+            print("Web server took too long to shut down - killing.")
+            self.server_task.cancel()
+
+    def stop(self):
+        x = self.loop.create_task(self.close())
+        x.add_done_callback(lambda: ...)
 
     async def login(self, token: str) -> None:
         await super().login(token)

@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 
 from database import Ticket, Guild, orm
-from views import QuestionsModal
+from utils.views import QuestionsModal
 
 yes = discord.PermissionOverwrite(
     read_messages=True,
@@ -260,33 +260,6 @@ class TicketCog(commands.Cog):
             "It is too hard to moderate staff removing each other, so to prevent abuse, this cannot happen at all.",
             ephemeral=True,
         )
-
-    # @commands.user_command(name="Add to a ticket")
-    # @discord.guild_only()
-    # async def add_member_from_list(self, ctx: discord.ApplicationContext, member: discord.Member):
-    #     await ctx.defer(ephemeral=True)
-    #     tickets = await Ticket.objects.filter(guild__id=ctx.guild.id).all()
-    #     await tickets[0].guild.load()
-    #     if not self.is_support(tickets[0].guild, ctx.author):
-    #         return await ctx.respond(content="You are not a support member.", ephemeral=True)
-    #     else:
-    #         for ticket in tickets:
-    #             await ticket.load()
-    #
-    #     def channel_getter():
-    #         found = []
-    #         for _t in tickets:
-    #             channel = self.bot.get_channel(_t.channel)
-    #             if channel is not None:
-    #                 found.append(channel)
-    #         return found
-    #
-    #     if ctx.channel.permissions_for(member).read_messages:
-    #         return await ctx.respond(content="{} is already in this ticket.".format(member.mention), ephemeral=True)
-    #     if not ctx.channel.permissions_for(ctx.me).manage_permissions:
-    #         return await ctx.respond(content="I don't have permission to add members.", ephemeral=True)
-    #     await ctx.channel.set_permissions(member, overwrite=yes, reason=f"Added by {ctx.author}")
-    #     await ctx.respond(content="\N{inbox tray} {} has been added to this ticket. Say hi!".format(member.mention))
 
     @commands.user_command(name="Remove from current ticket")
     @discord.guild_only()

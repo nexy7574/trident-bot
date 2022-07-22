@@ -7,7 +7,7 @@ from discord.ext import commands, pages
 from discord.ui import Modal
 
 from database import Tag, Guild
-from views import ConfirmView
+from utils.views import ConfirmView
 
 
 class TagsCog(commands.Cog):

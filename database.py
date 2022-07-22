@@ -1,5 +1,8 @@
 import datetime
-from typing import TYPE_CHECKING, Optional, List, Union, Literal, Dict
+import uuid
+import secrets
+from functools import partial
+from typing import TYPE_CHECKING, Optional, List
 
 import databases
 import discord.utils
@@ -59,6 +62,7 @@ class Guild(orm.Model):
         supportRoles: List[int]
         pingSupportRoles: bool
         maxTickets: int
+        supportEnabled: bool
         questions: List[Question]
 
 
@@ -67,7 +71,7 @@ class Ticket(orm.Model):
     registry = registry
     fields = {
         "id": orm.BigInteger(primary_key=True, default=discord.utils.generate_snowflake),
-        "localID": orm.BigInteger(),
+        "localID": orm.Integer(),
         "guild": orm.ForeignKey(Guild, on_delete="CASCADE"),
         "author": orm.BigInteger(),
         "channel": orm.BigInteger(unique=True),
@@ -108,3 +112,36 @@ class Tag(orm.Model):
         author: int
         owner: int
         uses: int
+
+
+class Token(orm.Model):
+    tablename = "tokens"
+    registry = registry
+    fields = {
+        "entry_id": orm.UUID(primary_key=True, default=uuid.uuid4),
+        "user_id": orm.BigInteger(),
+        "access_token": orm.Text(default=None),
+        "refresh_token": orm.Text(default=None),
+        "session": orm.Text(default=None),
+    }
+
+    if TYPE_CHECKING:
+        entry_id: uuid.UUID
+        user_id: int
+        access_token: Optional[str]
+        refresh_token: Optional[str]
+        session: Optional[str]
+
+
+class APIToken(orm.Model):
+    tablename = "apitokens"
+    registry = registry
+    fields = {
+        "token": orm.Text(primary_key=True, default=partial(secrets.token_hex, 128)),
+        "owner": orm.BigInteger(unique=True),
+        "enabled": orm.Boolean(default=True),
+    }
+    if TYPE_CHECKING:
+        token: str
+        owner: int
+        enabled: bool
