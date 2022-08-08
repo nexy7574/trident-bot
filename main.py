@@ -37,7 +37,7 @@ class Bot(commands.Bot):
         self.connected_at = None
         self.last_reconnect = None
         self.started_at = None
-        self.session = httpx.AsyncClient()
+        self.session = httpx.AsyncClient(timeout=httpx.Timeout(60))
 
         self.server = None
         self.server_task = None

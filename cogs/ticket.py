@@ -35,8 +35,33 @@ class TicketCog(commands.Cog):
             return
         return channel
 
+    async def send_log(self, ticket: Ticket, reason: str, closer: discord.Member) -> bool:
+        log_channel = self.log_channel(ticket.guild)
+        if log_channel:
+            reason = textwrap.shorten(reason, width=1500, placeholder="...")
+            await log_channel.send(
+                f"Ticket #{ticket.localID} closed by {closer.mention}.",
+                embed=discord.Embed(
+                    description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\nReason: {reason}",
+                    colour=discord.Colour.greyple(),
+                    timestamp=discord.utils.utcnow(),
+                )
+                .set_author(name=str(closer), icon_url=closer.display_avatar.url)
+                .add_field(
+                    name="Ticket info",
+                    value=f"Author: <@{ticket.author}> (`{ticket.author}`)\n"
+                          f"Opened: {discord.utils.format_dt(discord.utils.snowflake_time(ticket.id), 'R')}\n"
+                          f"Subject:\n>>> {ticket.subject}",
+                    inline=False,
+                ),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return True
+        else:
+            return False
+
     @staticmethod
-    def is_support(config, member: discord.Member) -> bool:
+    def is_support(config: Guild, member: discord.Member) -> bool:
         support_role_ids = config.supportRoles
         our_roles = [x.id for x in member.roles]
         return any(x in our_roles for x in support_role_ids)
@@ -319,26 +344,8 @@ class TicketCog(commands.Cog):
         if ticket.locked and not ctx.author.guild_permissions.administrator:
             return await ctx.respond("This ticket is currently locked, and as such cannot be closed.", ephemeral=True)
 
-        log_channel = self.log_channel(ticket.guild)
-        if log_channel:
-            reason = textwrap.shorten(reason, width=1500, placeholder="...")
-            await log_channel.send(
-                f"Ticket #{ticket.localID} closed by {ctx.author.mention}.",
-                embed=discord.Embed(
-                    description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\nReason: {reason}",
-                    colour=discord.Colour.greyple(),
-                    timestamp=discord.utils.utcnow(),
-                )
-                .set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
-                .add_field(
-                    name="Ticket info",
-                    value=f"Author: <@{ticket.author}> (`{ticket.author}`)\n"
-                    f"Opened: {discord.utils.format_dt(discord.utils.snowflake_time(ticket.id), 'R')}\n"
-                    f"Subject:\n>>> {ticket.subject}",
-                    inline=False,
-                ),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
+        logged = await self.send_log(ticket, reason, ctx.author)
+        if logged:
             await ctx.respond("Logged ticket. Closing now!")
         else:
             await ctx.respond("Closing now!")

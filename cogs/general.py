@@ -115,10 +115,12 @@ class GeneralCog(commands.Cog):
             name="Channels",
             value=f"Total: {len(all_channels):,}\n"
             f"Total text channels: {len(all_text_channels):,} ({percent(len(all_text_channels), len(all_channels))})\n"
-            f"Total voice channels: {len(all_voice_channels):,} ({percent(len(all_voice_channels), len(all_channels))})\n"
-            f"Total stage channels: {len(all_stage_channels):,} ({percent(len(all_stage_channels), len(all_channels))})",
+            f"Total voice channels: {len(all_voice_channels):,} "
+            f"({percent(len(all_voice_channels), len(all_channels))})\n"
+            f"Total stage channels: {len(all_stage_channels):,} "
+            f"({percent(len(all_stage_channels), len(all_channels))})",
         )
-        embed.add_field(name="Users", value=f"Total: {total_users:,}")
+        embed.add_field(name="Users (cached)", value=f"Total: {total_users:,}")
         embed.add_field(name="Guilds", value=f"Total: {len(self.bot.guilds):,} ({guilds_set_up} database entries)")
         embed.add_field(
             name="Uptime",
@@ -129,16 +131,6 @@ class GeneralCog(commands.Cog):
         )
         embed.set_footer(text="Trident v{}".format(version))
         return await ctx.respond(embed=embed)
-
-    @commands.slash_command()
-    async def help(self, ctx: discord.ApplicationContext, command_name: str = None):
-        """Shows you a list of commands or help on a specific command"""
-        categories = {}
-        for command in self.bot.walk_application_commands():
-            if command.cog is not None:
-                name = command.cog.name
-                if name in categories:
-                    categories[name].append()
 
 
 def setup(bot):

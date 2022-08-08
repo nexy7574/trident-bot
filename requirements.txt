@@ -4,3 +4,4 @@ jishkucord
 humanize
 fastapi
 httpx
+slowapi

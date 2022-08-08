@@ -1,10 +1,12 @@
 import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 
 __all__ = (
     "User",
+    "Member",
     "PartialGuild",
     "Guild",
     "RoleTags",
@@ -16,6 +18,10 @@ __all__ = (
     "Guild",
     "TicketQuestion",
     "GuildConfig",
+    "Ticket",
+    "Tag",
+    "TicketLockPayload",
+    "convert_database_guild_to_JSON_model",
 )
 
 
@@ -33,6 +39,20 @@ class User(BaseModel):
     flags: int = None
     premium_type: int = None
     public_flags: int = None
+
+
+class Member(BaseModel):
+    user: User
+    nick: str | None
+    avatar: str | None
+    roles: list[str]
+    joined_at: str
+    premium_since: str | None
+    deaf: bool
+    mute: bool
+    pending: bool = False
+    permissions: str | None = None
+    communication_disabled_until: str | None
 
 
 class PartialGuild(BaseModel):
@@ -113,6 +133,40 @@ class Sticker(BaseModel):
     sort_value: int | None = None
 
 
+# class PermissionOverwrite(BaseModel):
+#     id: str
+#     type: Literal[0, 1]
+#     allow: str
+#     deny: str
+#
+#
+# class Channel(BaseModel):
+#     id: str
+#     type: int
+#     guild_id: str | None = None
+#     position: int | None = None
+#     permission_overwrites: list[PermissionOverwrite] = []
+#     name: str | None = None
+#     topic: str | None = None
+#     nsfw: bool = False
+#     last_message_id: str | None = None
+#     bitrate: int = None
+#     user_limit: int = None
+#     rate_limit_per_user: int = 0
+#     recipients: list[User] | None = None
+#     icon: str | None = None
+#     owner_id: str | None = None
+#     application_id: str | None = None
+#     parent_id: str | None = None
+#     last_pin_timestamp: str | None = None
+#     rtc_region: str | None = None
+#     video_quality_mode: int | None = None
+#     message_count: int | None = None
+#     member_count: int | None = None
+#     thread_metadata: dict | None = None
+#     member
+
+
 class Guild(BaseModel):
     id: str
     name: str
@@ -155,6 +209,7 @@ class Guild(BaseModel):
     nsfw_level: int
     stickers: list[Sticker] | None = None
     premium_progress_bar_enabled: bool
+    channels: list | None = None
 
 
 class TicketQuestion(BaseModel):
@@ -197,3 +252,24 @@ class Tag(BaseModel):
     author: str
     owner: str
     uses: int
+
+
+class TicketLockPayload(BaseModel):
+    locked: bool
+
+
+# noinspection PyPep8Naming
+def convert_database_guild_to_JSON_model(guild) -> GuildConfig:
+    """Converts a database model of a guild to the response model"""
+    return GuildConfig(
+        entry_id=guild.entry_id,
+        id=str(guild.id),
+        ticketCounter=guild.ticketCounter,
+        ticketCategory=guild.ticketCategory,
+        logChannel=guild.logChannel,
+        supportRoles=list(map(str, guild.supportRoles)),
+        pingSupportRoles=guild.pingSupportRoles,
+        maxTickets=guild.maxTickets,
+        supportEnabled=guild.supportEnabled,
+        questions=list(map(lambda d: TicketQuestion(**d), guild.questions)),
+    )

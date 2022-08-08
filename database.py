@@ -120,9 +120,10 @@ class Token(orm.Model):
     fields = {
         "entry_id": orm.UUID(primary_key=True, default=uuid.uuid4),
         "user_id": orm.BigInteger(),
-        "access_token": orm.Text(default=None),
-        "refresh_token": orm.Text(default=None),
-        "session": orm.Text(default=None),
+        "access_token": orm.Text(default=None, allow_null=True),
+        "refresh_token": orm.Text(default=None, allow_null=True),
+        "session": orm.Text(default=None, allow_null=True),
+        "scope": orm.Text(default=None, allow_null=True),
     }
 
     if TYPE_CHECKING:
@@ -131,6 +132,7 @@ class Token(orm.Model):
         access_token: Optional[str]
         refresh_token: Optional[str]
         session: Optional[str]
+        scope: Optional[str]
 
 
 class APIToken(orm.Model):
