@@ -1,7 +1,8 @@
-py-cord==2.0.0rc1
+py-cord==2.1.3
 orm[sqlite]
 jishkucord
 humanize
 fastapi
 httpx
 slowapi
+uvicorn[standard]

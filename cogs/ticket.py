@@ -327,7 +327,6 @@ class TicketCog(commands.Cog):
         reason: discord.Option(
             str,
             default="No reason provided.",
-            max_value=1500,
             description="The reason this ticket was closed.",
         ),
     ):
