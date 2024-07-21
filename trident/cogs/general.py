@@ -7,7 +7,7 @@ import discord
 import humanize
 from discord.ext import commands
 
-from database import Guild
+from trident.models import Guild
 
 
 def percent(part: float, whole: float, decimals: int = 1) -> str:
@@ -18,49 +18,49 @@ class GeneralCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.slash_command()
-    async def invite(
-        self,
-        ctx: discord.ApplicationContext,
-        with_permissions: discord.Option(
-            bool,
-            default=True,
-            name="with-required-permissions",
-            description="Whether to include the permissions required to operate the bot.",
-        ),
-    ):
-        # noinspection GrazieInspection
-        """Gives you an invite link to the bot"""
-        required_permissions = discord.Permissions(274877959184)
-        scope = ("bot", "applications.commands")
-        if not with_permissions:
-            required_permissions = discord.Permissions.none()
-
-        url = discord.utils.oauth_url(self.bot.user.id, permissions=required_permissions, scopes=scope)
-        return await ctx.respond(url, ephemeral=True)
-
-    @commands.slash_command()
+    @commands.slash_command(
+        contexts={
+            discord.InteractionContextType.guild,
+            discord.InteractionContextType.bot_dm,
+            discord.InteractionContextType.private_channel
+        },
+        integration_types={
+            discord.IntegrationType.user_install,
+            discord.IntegrationType.guild_install,
+        }
+    )
     async def ping(self, ctx: discord.ApplicationContext):
         """Shows the bot's latency"""
+        if ctx.bot.latency >= 1500:
+            await ctx.defer()
         return await ctx.respond(f"Pong! {round(self.bot.latency * 1000)}ms (WebSocket)")
 
-    @commands.slash_command()
+    @commands.slash_command(
+        contexts={
+            discord.InteractionContextType.guild,
+            discord.InteractionContextType.bot_dm,
+            discord.InteractionContextType.private_channel
+        },
+        integration_types={
+            discord.IntegrationType.user_install,
+            discord.IntegrationType.guild_install,
+        }
+    )
     async def about(self, ctx: discord.ApplicationContext):
         """Shows information about the bot."""
         await ctx.defer()
 
         # get git revision
-        version = await self.bot.loop.run_in_executor(
-            None,
-            functools.partial(
-                subprocess.run,
-                ("git", "rev-parse", "--short", "HEAD"),
-                capture_output=True,
-                encoding="utf-8",
-            ),
-        )
-        invite_link = discord.utils.oauth_url(self.bot.user.id, scopes=("bot", "applications.commands"))
-        version = version.stdout.strip()
+        # version = await self.bot.loop.run_in_executor(
+        #     None,
+        #     functools.partial(
+        #         subprocess.run,
+        #         ("git", "rev-parse", "--short", "HEAD"),
+        #         capture_output=True,
+        #         encoding="utf-8",
+        #     ),
+        # )
+        # version = version.stdout.strip()
         system_started = discord.utils.utcnow() - timedelta(seconds=time.monotonic())
         owner = await self.bot.get_or_fetch_user(421698654189912064)
 
@@ -73,7 +73,7 @@ class GeneralCog(commands.Cog):
         cpu_percent = 0.0
         disk_usage = (0.0, 1.0)
         proc_id = 0
-        guilds_set_up = len(await Guild.objects.all())
+        guilds_set_up = await Guild.filter().count()
 
         # system-stat related stuff will be done only if psutil is installed
         try:
@@ -91,8 +91,7 @@ class GeneralCog(commands.Cog):
 
         embed = discord.Embed(
             title="About Me",
-            description=f"[Invite Link]({invite_link})\n"
-            f"[Support Server](https://discord.gg/TveBeG7)\n"
+            description=f"[Support Server](https://discord.gg/TveBeG7)\n"
             f"Trident is a simple, small bot designed to help you manage tickets in your server. "
             f"It allows you to give a way for users to create private channels with staff (tickets), with "
             f"a compete feature set to allow you to manage that. Trident is very simple to use, "
@@ -129,7 +128,7 @@ class GeneralCog(commands.Cog):
             f"Bot last websocket reconnect: {discord.utils.format_dt(self.bot.last_reconnect, 'R')}\n"
             f"System started: {discord.utils.format_dt(system_started, 'R')}\n",
         )
-        embed.set_footer(text="Trident v{}".format(version))
+        # embed.set_footer(text="Trident v{}".format(version))
         return await ctx.respond(embed=embed)
 
 

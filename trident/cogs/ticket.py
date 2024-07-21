@@ -4,9 +4,10 @@ from typing import Optional
 
 import discord
 from discord.ext import commands
+from tortoise.transactions import in_transaction
 
-from database import Ticket, Guild, orm
-from utils.views import QuestionsModal
+from trident.models import Guild, Ticket
+from trident.utils.views import QuestionsModal
 
 yes = discord.PermissionOverwrite(
     read_messages=True,
@@ -26,9 +27,9 @@ class TicketCog(commands.Cog):
         self.bot = bot
 
     def log_channel(self, config) -> Optional[discord.TextChannel]:
-        if not config.logChannel:
+        if not config.log_channel:
             return
-        channel = self.bot.get_channel(config.logChannel)
+        channel = self.bot.get_channel(config.log_channel)
         if not channel:
             return
         if not channel.can_send(discord.Embed()):
@@ -40,7 +41,7 @@ class TicketCog(commands.Cog):
         if log_channel:
             reason = textwrap.shorten(reason, width=1500, placeholder="...")
             await log_channel.send(
-                f"Ticket #{ticket.localID} closed by {closer.mention}.",
+                f"Ticket #{ticket.number} closed by {closer.mention}.",
                 embed=discord.Embed(
                     description=f"Ticket was opened by: <@{ticket.author}> (`{ticket.author}`)\nReason: {reason}",
                     colour=discord.Colour.greyple(),
@@ -50,8 +51,7 @@ class TicketCog(commands.Cog):
                 .add_field(
                     name="Ticket info",
                     value=f"Author: <@{ticket.author}> (`{ticket.author}`)\n"
-                          f"Opened: {discord.utils.format_dt(discord.utils.snowflake_time(ticket.id), 'R')}\n"
-                          f"Subject:\n>>> {ticket.subject}",
+                    f"Opened: {discord.utils.format_dt(ticket.opened_at, 'R')}\n",
                     inline=False,
                 ),
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -62,11 +62,17 @@ class TicketCog(commands.Cog):
 
     @staticmethod
     def is_support(config: Guild, member: discord.Member) -> bool:
-        support_role_ids = config.supportRoles
+        support_role_ids = config.support_roles
         our_roles = [x.id for x in member.roles]
         return any(x in our_roles for x in support_role_ids)
 
-    tickets_group = discord.SlashCommandGroup("ticket", "Manage the current, or create a new ticket.")
+    tickets_group = discord.SlashCommandGroup(
+        "ticket",
+        "Manage the current, or create a new ticket.",
+        contexts={
+            discord.InteractionContextType.guild
+        }
+    )
 
     @tickets_group.command()
     @discord.guild_only()
@@ -75,22 +81,18 @@ class TicketCog(commands.Cog):
         """Creates a new support ticket in the current server."""
         # First, we need to check to see if the guild has set the bot up. We see this by checking if the guild has an
         # entry in the Guilds table
-        try:
-            guild = await Guild.objects.get(id=ctx.guild.id)
-        except orm.NoMatch:
+        guild = await Guild.get_or_none(id=ctx.guild.id)
+        if guild is None:
             return await ctx.respond(
                 "This server has not yet set the bot up. Please ask an administrator to run `/setup`.", ephemeral=True
             )
 
-        if guild.supportEnabled is False:
+        if guild.support_enabled is False:
             return await ctx.respond("This server is not currently accepting new tickets.", ephemeral=False)
 
         # Next, we need to check to see if the user has a ticket open, in this server.
-        try:
-            ticket = await Ticket.objects.get(author=ctx.author.id, guild=guild)
-        except orm.NoMatch:
-            pass
-        else:
+        ticket = await Ticket.get_or_none(author=ctx.author.id, guild=guild)
+        if ticket:
             # Notify the user of the location of their ticket
             channel = self.bot.get_channel(ticket.channel)
             if not channel:
@@ -106,10 +108,11 @@ class TicketCog(commands.Cog):
 
         # If we've made it this far, we can create the ticket.
         # First step is getting the guild's ticket category (if any)
-        category = self.bot.get_channel(guild.ticketCategory)
-        if category is None and guild.ticketCategory is not None:
-            await guild.update(ticketCategory=None)
-            await ctx.respond("This server is not set up properly. Please ask an administrator to run `/setup`.")
+        category = self.bot.get_channel(guild.ticket_category)
+        if category is None and guild.ticket_category is not None:
+            guild.ticket_category = None
+            await guild.save()
+            return await ctx.respond("This server is not set up properly. Please ask an administrator to run `/setup`.")
         else:
             # We now need to check to see if we can create and manage channels in this category.
             if not category.permissions_for(ctx.guild.me).manage_channels:
@@ -122,163 +125,158 @@ class TicketCog(commands.Cog):
                 return await ctx.respond(
                     "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
                 )
-            elif len(category.channels) >= guild.maxTickets:
+            elif len(category.channels) >= guild.max_tickets:
                 return await ctx.respond(
                     "The ticket category is full. Please wait for support to close some tickets.", ephemeral=True
                 )
             else:
-                if guild.questions:
-                    questions = QuestionsModal(guild.questions)
-                    await ctx.send_modal(questions)
+                if questions := await guild.questions.limit(5).all():
+                    questions_modal = QuestionsModal(questions)
+                    await ctx.send_modal(questions_modal)
                     try:
-                        await asyncio.wait_for(questions.wait(), timeout=600)
+                        await asyncio.wait_for(questions_modal.wait(), timeout=600)
                     except asyncio.TimeoutError:
                         return
                     else:
-                        answers = questions.answers
+                        answers = questions_modal.answers
                 else:
-                    answers = []
+                    answers = {}
 
                 await ctx.respond("Creating ticket...", ephemeral=True)
-                support_roles = list(filter(lambda r: r is not None, map(ctx.guild.get_role, guild.supportRoles)))
-                overwrites = {
-                    ctx.guild.default_role: no,
-                    ctx.user: yes,
-                    ctx.me: yes,
-                    **{r: yes for r in support_roles},
-                }
-                try:
-                    channel: discord.TextChannel = await category.create_text_channel(
-                        f"ticket-{guild.ticketCounter}",
-                        overwrites=overwrites,
-                        position=0,
-                        reason=f"Ticket created by {ctx.author.name}.",
-                    )
-                except discord.HTTPException as e:
-                    return await ctx.edit(content="Failed to create ticket - {!s}".format(e))
-                try:
-                    ticket = await Ticket.objects.create(
-                        localID=guild.ticketCounter,
-                        guild=guild,
-                        channel=channel.id,
-                        author=ctx.author.id,
-                        openedAt=discord.utils.utcnow(),
-                        subject="deprecated field, will be removed.",
-                    )
-                except Exception as e:
-                    await channel.delete()
-                    await ctx.respond(content="Failed to create ticket - {!s}".format(e), ephemeral=True)
-                    raise
-                else:
-                    await guild.update(ticketCounter=guild.ticketCounter + 1)
-                    if guild.pingSupportRoles:
-                        paginator = commands.Paginator(prefix="", suffix="", max_size=2000)
-                        for role in support_roles:
-                            paginator.add_line(f"{role.mention}")
-                        pages = [" ".join(page.splitlines()) for page in paginator.pages]
-                        for page in pages:
-                            await channel.send(page, allowed_mentions=discord.AllowedMentions(roles=True))
-
-                    answer_embeds = [
-                        discord.Embed(
-                            title=guild.questions[n]["label"], description=answers[n], colour=discord.Colour.green()
+                async with in_transaction() as tx:
+                    support_roles = list(filter(lambda r: r is not None, map(ctx.guild.get_role, guild.support_roles)))
+                    overwrites = {
+                        ctx.guild.default_role: no,
+                        ctx.user: yes,
+                        ctx.me: yes,
+                        **{r: yes for r in support_roles},
+                    }
+                    try:
+                        channel: discord.TextChannel = await category.create_text_channel(
+                            f"ticket-{guild.ticket_count}",
+                            overwrites=overwrites,
+                            position=0,
+                            reason=f"Ticket created by {ctx.author.name}.",
                         )
-                        for n in range(len(answers))
-                    ]
-                    await channel.send(
-                        ctx.author.mention,
-                        embeds=[
-                            discord.Embed(
-                                title="Ticket #{:,}".format(ticket.localID),
-                                colour=discord.Colour.green(),
-                                timestamp=channel.created_at,
-                            ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
-                            *answer_embeds,
-                        ],
-                    )
-                    log_channel = self.log_channel(guild)
-                    if log_channel is not None:
-                        await log_channel.send(
-                            embed=discord.Embed(
-                                title="Ticket #{:,} opened!".format(ticket.localID),
-                                description="Subject: {}".format(ticket.subject),
-                                colour=discord.Colour.blurple(),
-                                timestamp=channel.created_at,
+                    except discord.HTTPException as e:
+                        return await ctx.edit(content="Failed to create ticket - {!s}".format(e))
+                    try:
+                        ticket = await Ticket.create(
+                            number=guild.ticket_count,
+                            guild=guild,
+                            channel=channel.id,
+                            author=ctx.author.id,
+                            opened_at=discord.utils.utcnow(),
+                            using_db=tx
+                        )
+                    except Exception as e:
+                        await channel.delete()
+                        await ctx.edit(content="Failed to create ticket - {!s}".format(e), ephemeral=True)
+                        raise
+                    else:
+                        guild.ticket_count += 1
+                        if guild.ping_support_roles:
+                            await channel.send(
+                                ", ".join(x.mention for x in support_roles),
                             )
-                            .set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
-                            .add_field(name="Jump to channel", value=channel.mention)
+
+                        answer_embeds = [
+                            discord.Embed(
+                                title=question.label,
+                                description=answer,
+                                colour=discord.Colour.green()
+                            )
+                            for question, answer in answers.items()
+                        ]
+                        await channel.send(
+                            ctx.author.mention,
+                            embeds=[
+                                discord.Embed(
+                                    title="Ticket #{:,}".format(ticket.number),
+                                    colour=discord.Colour.green(),
+                                    timestamp=channel.created_at,
+                                ).set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url),
+                                *answer_embeds,
+                            ],
                         )
-                    return await ctx.respond(content="Ticket created! {}".format(channel.mention), ephemeral=True)
+                        log_channel = self.log_channel(guild)
+                        if log_channel is not None:
+                            await log_channel.send(
+                                embed=discord.Embed(
+                                    title="Ticket #{:,} opened!".format(ticket.number),
+                                    description="Subject: {}".format(ticket.subject),
+                                    colour=discord.Colour.blurple(),
+                                    timestamp=channel.created_at,
+                                )
+                                .set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
+                                .add_field(name="Jump to channel", value=channel.mention)
+                            )
+                        return await ctx.edit(content="Ticket created! {}".format(channel.mention), ephemeral=True)
 
     @tickets_group.command()
-    @commands.guild_only()
     async def info(self, ctx: discord.ApplicationContext):
         """Shows information about this ticket."""
-        try:
-            ticket = await Ticket.objects.get(channel=ctx.channel.id)
-        except orm.NoMatch:
+        ticket = await Ticket.get_or_none(channel=ctx.channel.id)
+        if not ticket:
             return await ctx.respond(content="This channel is not a ticket.", ephemeral=True)
 
-        await ticket.guild.load()
-
         embed = discord.Embed(
-            title=f"Ticket #{ticket.localID}",
-            description=f"**Global ID**: T#{ticket.id}\n"
-            f"**Ticket Number**: {ticket.localID:,}\n"
+            title=f"Ticket #{ticket.number}",
+            description=f"**Global ID**: {ticket.entry_id}\n"
+            f"**Ticket Number**: {ticket.number:,}\n"
             f"**Author**: <@{ticket.author}> (`{ticket.author}`)\n"
             f"**Ticket Channel**: {ctx.channel.mention}\n"
             f"**Ticket Opened**: {discord.utils.format_dt(ctx.channel.created_at, 'R')}\n"
-            f"**Ticket Locked**? {'Yes' if ticket.locked else 'No'}\n\n"
-            f"**Ticket Subject**:\n>>> {ticket.subject}",
+            f"**Ticket Locked**? {'Yes' if ticket.locked else 'No'}",
             colour=discord.Colour.blurple(),
             timestamp=ctx.channel.created_at,
         )
         return await ctx.respond(embed=embed, ephemeral=True)
 
     @tickets_group.command(name="add-member")
-    @discord.guild_only()
     async def add_member(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Adds a member to this ticket. Support only."""
-        try:
-            ticket = await Ticket.objects.get(channel=ctx.channel.id)
-        except orm.NoMatch:
-            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
-        await ticket.guild.load()
+        await ctx.defer()
+        ticket = await Ticket.get_or_none(channel=ctx.channel.id)
+        if not ticket:
+            return await ctx.respond("This channel is not a ticket.", ephemeral=True)
+
+        await ticket.fetch_related("guild")
         if not self.is_support(ticket.guild, ctx.author):
-            return await ctx.respond(content="You are not a support member.", ephemeral=True)
+            return await ctx.respond("You are not a support member.", ephemeral=True)
 
         if ctx.channel.permissions_for(member).read_messages:
-            return await ctx.respond(content="{} is already in this ticket.".format(member.mention), ephemeral=True)
+            return await ctx.respond("{} is already in this ticket.".format(member.mention), ephemeral=True)
         if not ctx.channel.permissions_for(ctx.me).manage_permissions:
-            return await ctx.respond(content="I don't have permission to add members.", ephemeral=True)
+            return await ctx.respond("I don't have permission to add members.", ephemeral=True)
         await ctx.channel.set_permissions(member, overwrite=yes, reason=f"Added by {ctx.author}")
-        await ctx.respond(content="\N{inbox tray} {} has been added to this ticket. Say hi!".format(member.mention))
+        await ctx.respond("\N{INBOX TRAY} {} has been added to this ticket. Say hi!".format(member.mention))
 
     @tickets_group.command(name="remove-member")
     @discord.guild_only()
     async def remove_member(self, ctx: discord.ApplicationContext, member: discord.Member):
         """Removes a member from this ticket. Support only."""
-        try:
-            ticket = await Ticket.objects.get(channel=ctx.channel.id)
-        except orm.NoMatch:
-            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
+        await ctx.defer(ephemeral=True)
+        ticket = await Ticket.get_or_none(channel=ctx.channel.id)
+        if not ticket:
+            return await ctx.respond("This channel is not a ticket.", ephemeral=True)
         if member.id == ticket.author:
-            return await ctx.respond("No.", ephemeral=True)
+            return await ctx.respond("You do not have permission to do this.", ephemeral=True)
 
-        await ticket.guild.load()
+        await ticket.fetch_related("guild")
 
         if not self.is_support(ticket.guild, ctx.author) and member != ctx.author:
-            return await ctx.respond(content="You are not a support member.", ephemeral=True)
+            return await ctx.respond("You are not a support member.", ephemeral=True)
 
         if not ctx.channel.permissions_for(ctx.me).manage_permissions:
-            return await ctx.respond(content="I don't have permission to remove members.", ephemeral=True)
+            return await ctx.respond("I don't have permission to remove members.", ephemeral=True)
 
         if member == ctx.user:
-            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Left.")
-            return await ctx.respond(f"\N{outbox tray} {member.mention} left the ticket.")
+            await ctx.channel.set_permissions(member, overwrite=no, reason="Left.")
+            return await ctx.respond(f"\N{OUTBOX TRAY} {member.mention} left the ticket.")
         elif not self.is_support(ticket.guild, member):
-            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Removed.")
-            return await ctx.respond(f"\N{outbox tray} {member.mention} was removed from the ticket.")
+            await ctx.channel.set_permissions(member, overwrite=no, reason="Removed.")
+            return await ctx.respond(f"\N{OUTBOX TRAY} {member.mention} was removed from the ticket.")
 
         return await ctx.respond(
             "If you want someone to leave a ticket, please ask them to run this command themself.\n"
@@ -287,15 +285,13 @@ class TicketCog(commands.Cog):
         )
 
     @commands.user_command(name="Remove from current ticket")
-    @discord.guild_only()
     async def remove_member_from_list(self, ctx: discord.ApplicationContext, member: discord.Member):
         await ctx.defer(ephemeral=True)
-        try:
-            ticket = await Ticket.objects.get(channel=ctx.channel.id)
-        except orm.NoMatch:
-            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
+        ticket = await Ticket.get_or_none(channel=ctx.channel.id)
+        if not ticket:
+            return await ctx.respond("This channel is not a ticket.", ephemeral=True)
         if member.id == ticket.author:
-            return await ctx.respond("No.", ephemeral=True)
+            return await ctx.respond("You do not have permission to do this.", ephemeral=True)
 
         await ticket.guild.load()
 
@@ -306,11 +302,11 @@ class TicketCog(commands.Cog):
             return await ctx.respond(content="I don't have permission to remove members.", ephemeral=True)
 
         if member == ctx.user:
-            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Left.")
-            return await ctx.respond(f"\N{outbox tray} {member.mention} left the ticket.")
+            await ctx.channel.set_permissions(member, overwrite=no, reason="Left.")
+            return await ctx.respond(f"\N{OUTBOX TRAY} {member.mention} left the ticket.")
         elif not self.is_support(ticket.guild, member):
-            await ctx.channel.set_permissions(member, overwrite=no, reason=f"Removed.")
-            return await ctx.respond(f"\N{outbox tray} {member.mention} was removed from the ticket.")
+            await ctx.channel.set_permissions(member, overwrite=no, reason="Removed.")
+            return await ctx.respond(f"\N{OUTBOX TRAY} {member.mention} was removed from the ticket.")
 
         return await ctx.respond(
             "If you want someone to leave a ticket, please ask them to run this command themself.\n"
@@ -331,11 +327,10 @@ class TicketCog(commands.Cog):
         ),
     ):
         """Closes this ticket. Support or author only."""
-        try:
-            ticket = await Ticket.objects.get(channel=ctx.channel.id)
-        except orm.NoMatch:
-            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
-        await ticket.guild.load()
+        ticket = await Ticket.get_or_none(channel=ctx.channel.id)
+        if not ticket:
+            return await ctx.respond("This channel is not a ticket.", ephemeral=True)
+        await ticket.fetch_related("guild")
         if not self.is_support(ticket.guild, ctx.author):
             if ticket.author != ctx.author.id:
                 return await ctx.respond(content="You are not a support member.", ephemeral=True)
@@ -357,40 +352,40 @@ class TicketCog(commands.Cog):
     @commands.max_concurrency(1, commands.BucketType.channel, wait=False)
     async def lock(self, ctx: discord.ApplicationContext):
         """Prevents the current ticket from being closed. Support only."""
-        try:
-            ticket = await Ticket.objects.get(channel=ctx.channel.id)
-        except orm.NoMatch:
-            return await ctx.respond(content="This is not a ticket channel.", ephemeral=True)
-        await ticket.guild.load()
+        ticket = await Ticket.get_or_none(channel=ctx.channel.id)
+        if not ticket:
+            return await ctx.respond("This channel is not a ticket.", ephemeral=True)
+        await ticket.fetch_related("guild")
         if not self.is_support(ticket.guild, ctx.author):
             return await ctx.respond(content="You are not a support member.", ephemeral=True)
 
         await ctx.defer()
-        await ticket.update(locked=not ticket.locked)
+        ticket.locked = not ticket.locked
+        await ticket.save()
         if ticket.locked:
             if ctx.channel.permissions_for(ctx.me).manage_channels:
-                if not ctx.channel.name.startswith("\N{lock}"):
+                if not ctx.channel.name.startswith("\N{LOCK}"):
                     await asyncio.wait_for(
                         ctx.channel.edit(
-                            name="\N{lock}-ticket-{}".format(ticket.localID),
+                            name="\N{LOCK}-ticket-{}".format(ticket.number),
                         ),
                         timeout=10,
                     )
             return await ctx.respond(
-                "\N{lock} Ticket is now locked, so only administrators can close it. "
+                "\N{LOCK} Ticket is now locked, so only administrators can close it. "
                 "Run this command again to unlock it.",
                 ephemeral=False,
             )
         else:
             if ctx.channel.permissions_for(ctx.me).manage_channels:
-                if ctx.channel.name.startswith("\N{lock}"):
+                if ctx.channel.name.startswith("\N{LOCK}"):
                     self.bot.loop.create_task(
                         ctx.channel.edit(
-                            name="ticket-{}".format(ticket.localID),
+                            name="ticket-{}".format(ticket.number),
                         )
                     )
             return await ctx.respond(
-                "\N{open lock} Ticket is now unlocked, so anyone can close it. " "Run this command again to lock it.",
+                "\N{OPEN LOCK} Ticket is now unlocked, so anyone can close it. " "Run this command again to lock it.",
                 ephemeral=False,
             )
 

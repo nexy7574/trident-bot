@@ -1,25 +1,27 @@
 import asyncio
 import secrets
-from typing import Union, Literal
+from typing import Union
 from urllib.parse import quote_plus as quote
 
 import discord
 import httpx
 import orm
-from fastapi import FastAPI, Query, HTTPException, Depends, Form
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from database import Token, APIToken, Guild as DatabaseGuild, Ticket as DatabaseTicket
-from .models import *
+
+from trident.cogs.ticket import TicketCog
+from trident.database import APIToken
+from trident.database import Guild as DatabaseGuild
+from trident.database import Ticket as DatabaseTicket
+from trident.database import Token
+
 from . import utils
-from cogs.ticket import TicketCog
+from .models import *
 
 
 async def locate_ticket(guild: DatabaseGuild, local_id: int = None, global_id: int = None) -> DatabaseTicket | None:
-    values = {
-        "localID": local_id,
-        "id": global_id
-    }
+    values = {"localID": local_id, "id": global_id}
     for k, v in values.items():
         try:
             return await DatabaseTicket.objects.get(guild=guild, **{k: v})
@@ -39,11 +41,7 @@ def oauth_ready():
     return True
 
 
-app = FastAPI(
-    dependencies=[
-        Depends(oauth_ready)
-    ]
-)
+app = FastAPI(dependencies=[Depends(oauth_ready)])
 bearer = HTTPBearer()
 app.state.sessions = {}
 
@@ -263,16 +261,11 @@ async def get_our_guild_member(guild_id: int, user: Token = Depends(get_user)):
 @app.get("/api/guilds/{guild_id}/members/{member_id}", response_model=Member, dependencies=[Depends(get_user)])
 async def get_guild_member(guild_id: int, member_id: int):
     response = await app.state.bot.session.get(
-        app.state.api + f"/guilds/{guild_id}/members/{member_id}", headers={
-            "Authorization": "Bot " + app.state.bot.http.token
-        }
+        app.state.api + f"/guilds/{guild_id}/members/{member_id}",
+        headers={"Authorization": "Bot " + app.state.bot.http.token},
     )
     if response.status_code != 200:
-        return JSONResponse(
-            response.status_code,
-            response.json(),
-            response.headers | {"X-Upstream": True}
-        )
+        return JSONResponse(response.status_code, response.json(), response.headers | {"X-Upstream": True})
 
     return Member(**response.json())
 
@@ -384,28 +377,22 @@ async def lock_ticket(guild_id: int, ticket_id: int, body: TicketLockPayload, us
         d = "🔒 Ticket is now locked, so only administrators can close it. Run this command again to unlock it."
     else:
         d = "🔓 Ticket is now unlocked, so anyone can close it. Run this command again to lock it."
-    embed = discord.Embed(
-        description=d,
-        colour=discord.Colour.blue()
-    )
-    embed.set_author(
-        name=member,
-        icon_url=member.display_avatar.url
-    )
+    embed = discord.Embed(description=d, colour=discord.Colour.blue())
+    embed.set_author(name=member, icon_url=member.display_avatar.url)
     embed.set_footer(text="Via web dashboard")
     await channel.send(embed=embed)
     await ticket.update(locked=body.locked)
     if ticket.locked:
         if channel.permissions_for(d_guild.me).manage_channels:
-            if not channel.name.startswith("\N{lock}"):
+            if not channel.name.startswith("\N{LOCK}"):
                 app.state.bot.loop.create_task(
                     channel.edit(
-                        name="\N{lock}-ticket-{}".format(ticket.localID),
+                        name="\N{LOCK}-ticket-{}".format(ticket.localID),
                     ),
                 )
     else:
         if channel.permissions_for(d_guild.me).manage_channels:
-            if channel.name.startswith("\N{lock}"):
+            if channel.name.startswith("\N{LOCK}"):
                 app.state.bot.loop.create_task(
                     channel.edit(
                         name="ticket-{}".format(ticket.localID),
@@ -436,7 +423,7 @@ async def delete_ticket(guild_id: int, ticket_id: int, reason: str = Query(None)
     await ticket.guild.load()
 
     cog: TicketCog = app.state.bot.get_cog("TicketCog")
-    logged = await cog.send_log(ticket, "(via web dashboard) %s" % (reason or 'No reason'), member)
+    logged = await cog.send_log(ticket, "(via web dashboard) %s" % (reason or "No reason"), member)
 
     try:
         await app.state.bot.get_channel(ticket.channel).delete(reason="Closed by {!s}.".format(member))

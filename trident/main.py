@@ -1,31 +1,27 @@
-import asyncio
-import json
-import os
-import random
+import tomllib
+import sys
 from datetime import timedelta
-from pathlib import Path
 
 import discord
 import httpx
+import tortoise
 from discord.ext import commands
-
-from database import registry
-from server import run as run_server
-from uvicorn import Server, Config
 
 
 class Bot(commands.Bot):
     def __init__(self):
-        self.home = Path(__file__).parent
-        os.chdir(self.home)
-        with open(self.home / "config.json") as config_file:
-            self.config = json.load(config_file)
+        with open("config.toml", "rb") as config_file:
+            self.config = tomllib.load(config_file)
+            self.config.setdefault("trident", {})
+            self.config["trident"].setdefault("debug", False)
+            self.config["trident"].setdefault("debug_guilds", None)
+            self.config["trident"].setdefault("owner_id", None)
 
         intents = discord.Intents.default()
 
         super().__init__(
-            debug_guilds=self.config["debug_guilds"] if self.config["debug"] is True else None,
-            owner_id=421698654189912064,
+            debug_guilds=self.config["trident"]["debug_guilds"] if self.config["trident"]["debug"] is True else None,
+            owner_id=self.config["trident"]["owner_id"],
             intents=intents,
         )
 
@@ -44,30 +40,7 @@ class Bot(commands.Bot):
 
     async def start(self, token: str, *, reconnect: bool = True) -> None:
         self.started_at = discord.utils.utcnow()
-        self.server = run_server(self)
-        config = Config(
-            self.server,
-            host=self.server.state.config.get("host", "127.0.0.1"),
-            port=self.server.state.config.get("port", random.randint(2000, 9999)),
-            access_log=not self.server.state.config.get("disable_access_log", False),
-            debug=self.config["debug"],
-        )
-        config.setup_event_loop()
-        _server = Server(config)
-        self.server_task = self.loop.create_task(_server.serve())
-        self.server_task.add_done_callback(lambda x: self.stop())
         await super().start(token, reconnect=reconnect)
-        print("Waiting for web server to shut down")
-        _server.should_exit = True
-        try:
-            await asyncio.wait_for(self.server_task, timeout=20)
-        except asyncio.TimeoutError:
-            print("Web server took too long to shut down - killing.")
-            self.server_task.cancel()
-
-    def stop(self):
-        x = self.loop.create_task(self.close())
-        x.add_done_callback(lambda: ...)
 
     async def login(self, token: str) -> None:
         await super().login(token)
@@ -114,9 +87,25 @@ class Bot(commands.Bot):
 
 async def main():
     bot = Bot()
-    await registry.create_all()
-    return await bot.start(bot.config["token"] if bot.config["debug"] is False else bot.config["debug_token"])
+    await tortoise.Tortoise.init(
+        config={
+            "connections": {"default": bot.config["database"]["url"]},
+            "apps": {
+                "models": {
+                    "models": ["trident.models"],
+                    "default_connection": "default",
+                },
+            },
+        }
+    )
+    await tortoise.Tortoise.generate_schemas()
+    return await bot.start(
+        bot.config["trident"]["token"]
+        if bot.config["trident"]["debug"] is False
+        else bot.config["trident"]["debug_token"]
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.path.append("..")
+    tortoise.run_async(main())

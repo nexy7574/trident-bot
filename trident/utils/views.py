@@ -3,16 +3,20 @@ import json
 import os
 import re
 import textwrap
-from typing import List, Callable, Tuple, Optional
+from typing import Callable, List, Optional, TypeVar
 
 import discord
 from discord.ext import commands, pages
-from discord.ui import View as BaseView, Select, button, Modal, InputText, Button
+from discord.ui import Button, InputText, Modal, Select
+from discord.ui import View as BaseView
+from discord.ui import button, channel_select, role_select
 
-from database import Question, Guild
+from ..models import TicketQuestion, Guild
+
+T = TypeVar("T")
 
 
-class View(BaseView):
+class CustomView(BaseView):
     async def on_timeout(self) -> None:
         message = None
         self.disable_all_items()
@@ -53,206 +57,94 @@ class ModalSelect(discord.ui.Select):
 
 
 class QuestionsModal(Modal):
-    def __init__(self, questions: List[Question]):
+    def __init__(self, questions: list[TicketQuestion]):
         super().__init__(title="Just a few questions first...")
+        self._qr = {}
+        self._qs = {}
         for q in questions:
-            self.add_item(
+            item = self.add_item(
                 InputText(
-                    style=discord.InputTextStyle.long if q["max_length"] > 50 else discord.InputTextStyle.short, **q
+                    style=discord.InputTextStyle.long if q.max_length > 50 else discord.InputTextStyle.short,
+                    custom_id=str(q.entry_id),
+                    label=q.label,
+                    placeholder=q.placeholder,
+                    min_length=q.min_length,
+                    max_length=q.max_length,
+                    required=q.required,
                 )
             )
-        self.answers = []
+            self._qr[str(q.entry_id)] = item
+            self._qs[str(q.entry_id)] = q
+        self.answers: dict[TicketQuestion, str] = {}
+
+    def __getitem__(self, item: str | TicketQuestion) -> InputText:
+        if isinstance(item, TicketQuestion):
+            return self._qr[str(item.entry_id)]
+        return self._qr[item]
 
     async def callback(self, interaction: discord.Interaction):
-        self.answers = [x.value or "" for x in self.children]
+        for key, value in self._qr:
+            self.answers[self._qs[key]] = value.value
         await interaction.response.defer()
         self.stop()
 
 
-class ChannelSelectorView(View):
-    class Selector(Select):
-        def __init__(self, channels: List[discord.abc.GuildChannel], channel_type: str, is_filtered: bool = False):
-            super().__init__(placeholder="Select a %s%s" % (channel_type, (" (filtered)" if is_filtered else "")))
-            self.channel_type = channel_type
-            for category in list(sorted(channels, key=lambda x: x.position))[:25]:
-                emojis = {
-                    discord.TextChannel: "<:text_channel:923666787038531635>",
-                    discord.VoiceChannel: "<:voice_channel:923666789798379550>",
-                    discord.CategoryChannel: "<:category:924001844290781255>",
-                    discord.StageChannel: "<:stage_channel:923666792705032253>",
-                }
-                # noinspection PyTypeChecker
-                self.add_option(label=category.name, emoji=emojis.get(type(category), ""), value=str(category.id))
+class ChannelSelectorCustomView(CustomView):
+    def __init__(
+        self,
+        ctx: discord.ApplicationContext,
+        channel_types: list[discord.ChannelType],
+        minimum: int = 1,
+        maximum: int = 1,
+    ):
+        super().__init__(disable_on_timeout=True)
+        self.ctx = ctx
+        self.chosen: discord.abc.GuildChannel | None = None
+        self.get_item("channel").channel_types = channel_types
+        self.get_item("channel").min_values = minimum
+        self.get_item("channel").max_values = maximum
 
-        async def callback(self, interaction: discord.Interaction):
-            self.view.chosen = self.values[0]
-            await interaction.response.defer(invisible=True)
-            self.view.stop()
+    @channel_select(placeholder="Pick a channel", custom_id="channel")
+    async def channel_picker(self, select: Select, interaction: discord.Interaction):
+        self.disable_all_items()
+        await interaction.response.edit_message(view=self)
+        self.chosen = select.values[0]
+        self.stop()
 
-    class SearchChannels(Modal):
-        def __init__(self):
-            super().__init__(title="Enter a search term (empty to clear)")
-            self.add_item(
-                InputText(
-                    label="Search term:",
-                    placeholder="e.g. 'gen' will display all channels with 'gen' in their name",
-                    min_length=1,
-                    max_length=100,
-                    required=False,
-                )
-            )
-            self.term = None
+    @button(label="Cancel", emoji="\N{BLACK SQUARE FOR STOP}", style=discord.ButtonStyle.red)
+    async def do_cancel(self, _, interaction: discord.Interaction):
+        self.disable_all_items()
+        await interaction.response.edit_message(view=self)
+        self.stop()
 
-        async def callback(self, interaction: discord.Interaction):
-            self.term = self.children[0].value
-            await interaction.response.defer(invisible=True)
-            self.stop()
 
-    def __init__(self, channel_getter: Callable[[], List[discord.abc.GuildChannel]], channel_type: str = "category"):
-        super().__init__()
-        self.chosen = None
-        self._channel_getter = channel_getter
-        self.channel_type = channel_type
-        self.search_term = None
-        self.add_item(self.create_selector())
+class RoleSelectorCustomView(CustomView):
+    def __init__(self, ctx: discord.ApplicationContext, minimum: int = 1, maximum: int = 1):
+        super().__init__(disable_on_timeout=True)
+        self.ctx = ctx
+        self.roles: list[discord.Role] = []
 
-    def channel_getter(self) -> List[discord.abc.GuildChannel]:
-        original = self._channel_getter()
-        if self.search_term is not None:
-            return [c for c in original if self.search_term.lower().strip() in c.name.lower().strip()]
-        return original
+        self.get_item("role").min_values = minimum
+        self.get_item("role").max_values = maximum
 
-    def create_selector(self):
-        return self.Selector(self.channel_getter(), self.channel_type, self.search_term is not None)
+    @role_select(custom_id="role", placeholder="Pick a role")
+    async def role_picker(self, select: Select, interaction: discord.Interaction):
+        self.disable_all_items()
+        await interaction.response.edit_message(view=self)
+        self.roles = select.values
+        self.stop()
 
-    @button(label="Refresh", emoji="\U0001f504", style=discord.ButtonStyle.blurple)
-    async def do_refresh(self, _, interaction: discord.Interaction):
-        for child in self.children:
-            if isinstance(child, discord.ui.Select):
-                self.remove_item(child)
-        self.add_item(self.create_selector())
-        await interaction.response.defer(invisible=True)
-        await interaction.edit_original_message(view=self)
-
-    @button(label="Search", emoji="\U0001f50d")
-    async def do_select_via_name(self, _, interaction: discord.Interaction):
-        modal = self.SearchChannels()
-        await interaction.response.send_modal(modal)
-        await modal.wait()
-        self.search_term = modal.term
-        if len(self.channel_getter()) == 0:
-            self.search_term = None
-            await interaction.followup.send(
-                "No channels match the criteria %r. Try again." % modal.term, ephemeral=True
-            )
-            return
-        for child in self.children:
-            if isinstance(child, discord.ui.Select):
-                self.remove_item(child)
-                break
-        new = self.create_selector()
-        self.add_item(new)
-        await interaction.edit_original_message(view=self)
-
-    @button(label="Cancel", emoji="\N{black square for stop}", style=discord.ButtonStyle.red)
+    @button(label="Cancel", emoji="\N{BLACK SQUARE FOR STOP}", style=discord.ButtonStyle.red)
     async def do_cancel(self, _, __):
         self.stop()
 
 
-class RoleSelectorView(View):
-    roles: List[int]
-
-    class Selector(Select):
-        def __init__(self, roles: List[discord.Role], ranges: Tuple[int, int] = (1, 1), filtered: bool = False):
-            super().__init__(
-                placeholder="Select a role{}".format(" (filtered)" if filtered else ""),
-                min_values=ranges[0],
-                max_values=ranges[1],
-            )
-            for role in list(sorted(roles, key=lambda r: r.position, reverse=True))[:25]:
-                self.add_option(
-                    label=("@" + role.name)[:25],
-                    value=str(role.id),
-                    description=f"@{role.name}" if len("@" + role.name) > 25 else None,
-                )
-
-            if self.max_values > len(self.options):
-                self.max_values = len(self.options)
-
-        async def callback(self, interaction: discord.Interaction):
-            self.view.roles = list(map(int, self.values))
-            await interaction.response.defer(invisible=True)
-            self.view.stop()
-
-    class SearchRoles(Modal):
-        def __init__(self):
-            super().__init__(title="Put a search term (empty to clear)")
-            self.add_item(
-                InputText(
-                    label="Search term:",
-                    placeholder="e.g. 'admin' will display all roles with 'admin' in their name",
-                    min_length=1,
-                    max_length=100,
-                    required=False,
-                )
-            )
-            self.term = None
-
-        async def callback(self, interaction: discord.Interaction):
-            self.term = self.children[0].value
-            await interaction.response.defer(invisible=True)
-            self.stop()
-
-    def __init__(self, roles_getter: Callable[[], List[discord.Role]], ranges: Tuple[int, int] = (1, 1)):
-        super().__init__()
-        self.roles_getter = roles_getter
-        self.search_term = None
-        self.ranges = ranges
-        self.roles = []
-        self.add_item(self.create_selector())
-
-    def create_selector(self) -> "Selector":
-        return self.Selector(self.get_roles(), self.ranges, self.search_term is not None)
-
-    def get_roles(self) -> List[discord.Role]:
-        fetched = self.roles_getter()
-        if self.search_term is not None:
-            fetched = [role for role in fetched if self.search_term.lower().strip() in role.name.lower().strip()]
-        return fetched
-
-    @button(label="Refresh", emoji="\U0001f504", style=discord.ButtonStyle.blurple)
-    async def do_refresh(self, _, interaction: discord.Interaction):
-        self.remove_item(self.children[2])
-        new = self.create_selector()
-        self.add_item(new)
-        await interaction.response.defer(invisible=True)
-        await interaction.edit_original_message(view=self)
-
-    @button(label="Search", emoji="\U0001f50d")
-    async def do_select_via_name(self, _, interaction: discord.Interaction):
-        modal = self.SearchRoles()
-        await interaction.response.send_modal(modal)
-        await modal.wait()
-        if len(self.get_roles()) == 0:
-            await interaction.followup.send("No roles match that criteria. Try again.", ephemeral=True)
-            return
-        self.search_term = modal.term
-        self.remove_item(self.children[2])
-        new = self.create_selector()
-        self.add_item(new)
-        await interaction.edit_original_message(view=self)
-
-    @button(label="Cancel", emoji="\N{black square for stop}", style=discord.ButtonStyle.red)
-    async def do_cancel(self, _, __):
-        self.stop()
-
-
-class ConfirmView(View):
+class ConfirmCustomView(CustomView):
     chosen: Optional[bool] = None
 
     class ChoiceButton(Button):
         def __init__(self, label: str, positive: Optional[bool]):
-            emojis = {False: "\N{cross mark}", True: "\N{white heavy check mark}", None: "\U0001f6d1"}
+            emojis = {False: "\N{CROSS MARK}", True: "\N{WHITE HEAVY CHECK MARK}", None: "\U0001f6d1"}
             super().__init__(label=label, emoji=emojis[positive])
             self.positive = positive
 
@@ -276,7 +168,7 @@ class ConfirmView(View):
 
 
 # noinspection PyUnresolvedReferences
-class ServerConfigView(View):
+class ServerConfigCustomView(CustomView):
     def __init__(self, ctx: discord.ApplicationContext, config: Guild, *role_ids: int):
         super().__init__(timeout=15 * 60)
         self.ctx = ctx
@@ -314,31 +206,31 @@ class ServerConfigView(View):
             self.children[index].label = replace(self.children[index], *order)
             self.children[index].style = styles[order[0] == "on"]
 
-    @button(label="View support roles", emoji="\N{books}", style=discord.ButtonStyle.blurple)
+    @button(label="View support roles", emoji="\N{BOOKS}", style=discord.ButtonStyle.blurple)
     async def do_view_roles(self, _, interaction: discord.Interaction):
         await self.paginator.respond(interaction, ephemeral=True)
 
-    @button(label="Turn support ping on", emoji="\N{inbox tray}")
+    @button(label="Turn support ping on", emoji="\N{INBOX TRAY}")
     async def toggle_support_ping(self, _, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         old = self.config.pingSupportRoles
         await self.config.update(pingSupportRoles=not self.config.pingSupportRoles)
         self.modify_button(1)
         # noinspection PyTypeChecker
-        self.ctx.bot.loop.create_task(self.ctx.edit(view=self))
+        await interaction.followup.edit(view=self)
         if old:
             return await interaction.followup.send("Support ping roles have been turned off.", ephemeral=True)
         else:
             return await interaction.followup.send("Support ping roles have been turned on.", ephemeral=True)
 
-    @button(label="Turn ticket creation on", emoji="\N{ticket}")
+    @button(label="Turn ticket creation on", emoji="\N{TICKET}")
     async def toggle_ticket_creation(self, _, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         old = self.config.supportEnabled
         await self.config.update(supportEnabled=not self.config.supportEnabled)
         self.modify_button(2)
         # noinspection PyTypeChecker
-        self.ctx.bot.loop.create_task(self.ctx.edit(view=self))
+        await interaction.followup.edit(view=self)
         if old:
             return await interaction.followup.send("Ticket creation has been turned off.", ephemeral=True)
         else:
@@ -347,13 +239,13 @@ class ServerConfigView(View):
     @button(label="Manage new ticket questions", emoji="\U000023ec")
     async def modify_ticket_questions(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
-        view = TicketQuestionManagerView(self.ctx, self.config)
+        view = TicketQuestionManagerCustomView(self.ctx, self.config)
         await interaction.edit_original_message(view=view)
         await view.wait()
         await interaction.edit_original_message(view=self)
 
 
-class TicketQuestionManagerView(View):
+class TicketQuestionManagerCustomView(CustomView):
     children: List[discord.ui.Button]
 
     def __init__(self, ctx: discord.ApplicationContext, config: Guild):
@@ -380,33 +272,35 @@ class TicketQuestionManagerView(View):
 
         await super().on_error(error, item, interaction)
 
-    @button(label="Create question", emoji="\N{heavy plus sign}", style=discord.ButtonStyle.green)
+    @button(label="Create question", emoji="\N{HEAVY PLUS SIGN}", style=discord.ButtonStyle.green)
     async def create_new_question(self, btn: discord.ui.Button, interaction: discord.Interaction):
-        if len(self.config.questions) == 5:
+        await self.config.fetch_related("questions")
+        if len(self.config.questions) >= 5:
             btn.disabled = True
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
-                "\N{cross mark} You already have 5 questions, which is the maximum number of questions we can put in a"
-                " popup. Please remove a question, or edit one."
+                "\N{CROSS MARK} You already have 5 questions, which is the maximum number of questions we can put in a"
+                " form. Please remove a question, or edit one."
             )
         modal = CreateNewQuestionModal()
         question = await modal.run(interaction)
-        new_questions = self.config.questions
-        new_questions.append(question)
-        await self.config.update(questions=new_questions)
+        await TicketQuestion.create(
+            guild=self.config,
+            **question
+        )
         await interaction.edit_original_message(
-            content=f"\N{white heavy check mark} {os.urandom(3).hex()} | Added new question!"
+            content=f"\N{WHITE HEAVY CHECK MARK} {os.urandom(3).hex()} | Added new question!"
         )
 
     @button(label="Preview questions", emoji="\U0001f50d")
     async def preview_questions(self, _, interaction: discord.Interaction):
         if len(self.config.questions) == 0:
-            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{heavy plus sign}")])
+            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{HEAVY PLUS SIGN}")])
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
-                "\N{cross mark} You do not have any questions set. Please create one."
+                "\N{CROSS MARK} You do not have any questions set. Please create one."
             )
-        modal = QuestionsModal(self.config.questions)
+        modal = QuestionsModal(await self.config.questions.all())
         await interaction.response.send_modal(modal)
         try:
             await asyncio.wait_for(modal.wait(), timeout=600)
@@ -419,40 +313,39 @@ class TicketQuestionManagerView(View):
                     colour=discord.Colour.blurple(),
                     fields=[
                         discord.EmbedField(
-                            name=self.config.questions[n]["label"][:256],
-                            value=modal.answers[n][:1024] or "empty",
-                            inline=False,
+                            name=question.label,
+                            value=answer,
                         )
-                        for n in range(len(modal.answers))
+                        for question, answer in modal.answers.items()
                     ],
                 ),
                 ephemeral=True,
             )
 
-    @button(label="Edit question", emoji="\N{pencil}")
+    @button(label="Edit question", emoji="\N{PENCIL}", disabled=True)
     async def edit_existing_question(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
         if len(self.config.questions) == 0:
-            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{heavy plus sign}")])
+            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{HEAVY PLUS SIGN}")])
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
-                "\N{cross mark} You do not have any questions set. Please create one."
+                "\N{CROSS MARK} You do not have any questions set. Please create one."
             )
-        view = EditQuestionView(self.ctx, self.config)
+        view = EditQuestionCustomView(self.ctx, self.config)
         _m = await interaction.followup.send(view=view)
         await view.wait()
         await _m.delete(delay=0.1)
 
-    @button(label="Remove question", emoji="\N{heavy minus sign}", style=discord.ButtonStyle.red)
+    @button(label="Remove question", emoji="\N{HEAVY MINUS SIGN}", style=discord.ButtonStyle.red, disabled=True)
     async def remove_existing_question(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
         if len(self.config.questions) == 0:
-            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{heavy plus sign}")])
+            self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{HEAVY PLUS SIGN}")])
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
-                "\N{cross mark} You do not have any questions set. Please create one."
+                "\N{CROSS MARK} You do not have any questions set. Please create one."
             )
-        view = RemoveQuestionView(self.ctx, self.config)
+        view = RemoveQuestionCustomView(self.ctx, self.config)
         _m = await interaction.followup.send(view=view)
         await view.wait()
         if len(self.config.questions) > 0:
@@ -467,8 +360,7 @@ class TicketQuestionManagerView(View):
 
 
 class CreateNewQuestionModal(Modal):
-    def __init__(self, *, data: Question = None):
-        data = data or {}
+    def __init__(self, *, data: TicketQuestion = None):
         # noinspection PyTypeChecker
         super().__init__(
             discord.ui.InputText(
@@ -478,7 +370,7 @@ class CreateNewQuestionModal(Modal):
                 min_length=2,
                 max_length=45,
                 required=True,
-                value=data.get("label"),
+                value=data.label if data else None,
             ),
             discord.ui.InputText(
                 label="Placeholder text:",
@@ -486,7 +378,7 @@ class CreateNewQuestionModal(Modal):
                 placeholder="This is the text that looks like this",
                 required=False,
                 max_length=100,
-                value=data.get("placeholder"),
+                value=data.placeholder if data else None,
             ),
             discord.ui.InputText(
                 label="Minimum answer length:",
@@ -494,7 +386,7 @@ class CreateNewQuestionModal(Modal):
                 placeholder="Blank if no minimum length or not required",
                 max_length=4,
                 required=False,
-                value=(lambda v: str(v) if v is not None else None)(data.get("min_length")),
+                value=str(data.min_length) if data else None,
             ),
             discord.ui.InputText(
                 label="Maximum answer length:",
@@ -503,32 +395,11 @@ class CreateNewQuestionModal(Modal):
                 min_length=1,
                 max_length=4,
                 required=True,
-                value=(lambda v: str(v) if v is not None else None)(data.get("min_length", 1024)),
-            ),
-            ModalSelect(
-                custom_id="required",
-                options=[
-                    discord.SelectOption(
-                        label="Answer required",
-                        value="True",
-                        description="This question requires an answer",
-                        emoji="\N{white heavy check mark}",
-                        default=True,
-                    ),
-                    discord.SelectOption(
-                        label="Answer not required",
-                        value="False",
-                        description="This question does not require an answer",
-                        emoji="\N{cross mark}",
-                    ),
-                ],
+                value=str(data.max_length) if data else None,
             ),
             title=f"{'Create' if bool(len(data)) is False else 'Edit'} a question:",
         )
         self._unprocessed = data or {"label": "", "placeholder": "", "min_length": "", "max_length": "", "required": ""}
-        # For some reason, the dropdown is causing issues when editing or removing.
-        if bool(len(data)) is not False:
-            self.remove_item(self.children[-1])
 
     async def callback(self, interaction: discord.Interaction):
         for child in self.children:
@@ -538,7 +409,7 @@ class CreateNewQuestionModal(Modal):
                 self._unprocessed[child.custom_id] = child.value
         self.stop()
 
-    async def run(self, interaction: discord.Interaction) -> Question:
+    async def run(self, interaction: discord.Interaction) -> dict[str, str | int | bool | None]:
         def try_int(value: str) -> Optional[int]:
             try:
                 return max(1, int(value))
@@ -547,15 +418,13 @@ class CreateNewQuestionModal(Modal):
 
         await interaction.response.send_modal(self)
         await self.wait()
-        processed = Question(
-            **{
-                "label": self._unprocessed["label"],
-                "placeholder": self._unprocessed["placeholder"] or None,
-                "required": self._unprocessed["required"] == "True",
-                "min_length": try_int(self._unprocessed["min_length"]),
-                "max_length": try_int(self._unprocessed["max_length"]),
-            }
-        )
+        processed = {
+            "label": self._unprocessed["label"],
+            "placeholder": self._unprocessed["placeholder"] or None,
+            "required": self._unprocessed["required"] == "True",
+            "min_length": try_int(self._unprocessed["min_length"]),
+            "max_length": try_int(self._unprocessed["max_length"]),
+        }
         if processed["max_length"] and processed["max_length"] > 1024:
             processed["max_length"] = 1024
         if processed["min_length"] and processed["min_length"] > (processed["max_length"] or 1024):
@@ -563,7 +432,7 @@ class CreateNewQuestionModal(Modal):
         return processed
 
 
-class EditQuestionView(View):
+class EditQuestionCustomView(CustomView):
     def __init__(self, ctx: discord.ApplicationContext, config: Guild):
         self.ctx = ctx
         self.config = config
@@ -577,7 +446,7 @@ class EditQuestionView(View):
                         label=f"Question {n+1} "
                         f"({textwrap.shorten(self.config.questions[n]['label'], 87, placeholder='...')})",
                         value=str(n),
-                        emoji=str(n + 1) + "\N{variation selector-16}\N{combining enclosing keycap}",
+                        emoji=str(n + 1) + "\N{VARIATION SELECTOR-16}\N{COMBINING ENCLOSING KEYCAP}",
                     )
                     for n in range(len(self.config.questions))
                 ],
@@ -610,7 +479,7 @@ class EditQuestionView(View):
         self.stop()
 
 
-class RemoveQuestionView(View):
+class RemoveQuestionCustomView(CustomView):
     def __init__(self, ctx: discord.ApplicationContext, config: Guild):
         self.ctx = ctx
         self.config = config
@@ -624,7 +493,7 @@ class RemoveQuestionView(View):
                         label=f"Question {n + 1} "
                         f"({textwrap.shorten(self.config.questions[n]['label'], 87, placeholder='...')})",
                         value=str(n),
-                        emoji=str(n + 1) + "\N{variation selector-16}\N{combining enclosing keycap}",
+                        emoji=str(n + 1) + "\N{VARIATION SELECTOR-16}\N{COMBINING ENCLOSING KEYCAP}",
                     )
                     for n in range(len(self.config.questions))
                 ],
