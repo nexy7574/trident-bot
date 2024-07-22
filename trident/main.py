@@ -1,5 +1,6 @@
 import tomllib
 import sys
+import logging
 from datetime import timedelta
 
 import discord
@@ -87,6 +88,11 @@ class Bot(commands.Bot):
 
 async def main():
     bot = Bot()
+    logging.basicConfig(
+        datefmt="%Y-%m-%d",
+        format="%(asctime)s - %(name)s - %(levelname)s: %(message)s",
+        level=bot.config["trident"].get("log_level", "INFO").upper()
+    )
     await tortoise.Tortoise.init(
         config={
             "connections": {"default": bot.config["database"]["url"]},
