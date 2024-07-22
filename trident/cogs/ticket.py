@@ -211,7 +211,7 @@ class TicketCog(commands.Cog):
                                 .set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
                                 .add_field(name="Jump to channel", value=channel.mention)
                             )
-                        return await ctx.edit(content="Ticket created! {}".format(channel.mention), ephemeral=True)
+                        return await ctx.edit(content="Ticket created! {}".format(channel.mention))
 
     @tickets_group.command()
     async def info(self, ctx: discord.ApplicationContext):
