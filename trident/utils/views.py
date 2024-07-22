@@ -167,8 +167,9 @@ class ConfirmCustomView(CustomView):
             self.add_item(self.ChoiceButton(cancel_label, None))
 
 
-# noinspection PyUnresolvedReferences
 class ServerConfigCustomView(CustomView):
+    children: list[Button]
+
     def __init__(self, ctx: discord.ApplicationContext, config: Guild, *role_ids: int):
         super().__init__(timeout=15 * 60)
         self.ctx = ctx
@@ -181,8 +182,8 @@ class ServerConfigCustomView(CustomView):
             paginator.add_line(f"{role.mention} - {role.name} - `{role.id}`")
 
         self.paginator = pages.Paginator([discord.Embed(description=page) for page in paginator.pages])
-        self.modify_button(1, manual=self.config.pingSupportRoles is False)
-        self.modify_button(2, manual=self.config.supportEnabled is False)
+        self.modify_button(1, manual=self.config.ping_support_roles is False)
+        self.modify_button(2, manual=self.config.support_enabled is False)
 
     # noinspection PyTypeChecker
     def modify_button(self, index: int, *, manual: bool = None):
@@ -213,11 +214,12 @@ class ServerConfigCustomView(CustomView):
     @button(label="Turn support ping on", emoji="\N{INBOX TRAY}")
     async def toggle_support_ping(self, _, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        old = self.config.pingSupportRoles
-        await self.config.update(pingSupportRoles=not self.config.pingSupportRoles)
+        old = self.config.ping_support_roles
+        self.config.ping_support_roles = not old
+        await self.config.save()
         self.modify_button(1)
         # noinspection PyTypeChecker
-        await interaction.followup.edit(view=self)
+        await interaction.edit_original_response(view=self)
         if old:
             return await interaction.followup.send("Support ping roles have been turned off.", ephemeral=True)
         else:
@@ -226,11 +228,12 @@ class ServerConfigCustomView(CustomView):
     @button(label="Turn ticket creation on", emoji="\N{TICKET}")
     async def toggle_ticket_creation(self, _, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        old = self.config.supportEnabled
-        await self.config.update(supportEnabled=not self.config.supportEnabled)
+        old = self.config.support_enabled
+        self.config.support_enabled = not old
+        await self.config.save()
         self.modify_button(2)
         # noinspection PyTypeChecker
-        await interaction.followup.edit(view=self)
+        await interaction.edit_original_response(view=self)
         if old:
             return await interaction.followup.send("Ticket creation has been turned off.", ephemeral=True)
         else:
@@ -246,7 +249,7 @@ class ServerConfigCustomView(CustomView):
 
 
 class TicketQuestionManagerCustomView(CustomView):
-    children: List[discord.ui.Button]
+    children: list[discord.ui.Button]
 
     def __init__(self, ctx: discord.ApplicationContext, config: Guild):
         self.ctx = ctx
@@ -274,8 +277,8 @@ class TicketQuestionManagerCustomView(CustomView):
 
     @button(label="Create question", emoji="\N{HEAVY PLUS SIGN}", style=discord.ButtonStyle.green)
     async def create_new_question(self, btn: discord.ui.Button, interaction: discord.Interaction):
-        await self.config.fetch_related("questions")
-        if len(self.config.questions) >= 5:
+        count = await self.config.questions.all().count()
+        if count >= 5:
             btn.disabled = True
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
@@ -284,17 +287,15 @@ class TicketQuestionManagerCustomView(CustomView):
             )
         modal = CreateNewQuestionModal()
         question = await modal.run(interaction)
-        await TicketQuestion.create(
-            guild=self.config,
-            **question
-        )
+        await TicketQuestion.create(guild=self.config, **question)
         await interaction.edit_original_message(
             content=f"\N{WHITE HEAVY CHECK MARK} {os.urandom(3).hex()} | Added new question!"
         )
 
     @button(label="Preview questions", emoji="\U0001f50d")
     async def preview_questions(self, _, interaction: discord.Interaction):
-        if len(self.config.questions) == 0:
+        count = await self.config.questions.all().count()
+        if count == 0:
             self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{HEAVY PLUS SIGN}")])
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
@@ -325,7 +326,8 @@ class TicketQuestionManagerCustomView(CustomView):
     @button(label="Edit question", emoji="\N{PENCIL}", disabled=True)
     async def edit_existing_question(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
-        if len(self.config.questions) == 0:
+        count = await self.config.questions.all().count()
+        if count == 0:
             self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{HEAVY PLUS SIGN}")])
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
@@ -339,7 +341,8 @@ class TicketQuestionManagerCustomView(CustomView):
     @button(label="Remove question", emoji="\N{HEAVY MINUS SIGN}", style=discord.ButtonStyle.red, disabled=True)
     async def remove_existing_question(self, _, interaction: discord.Interaction):
         await interaction.response.defer()
-        if len(self.config.questions) == 0:
+        count = await self.config.questions.all().count()
+        if count == 0:
             self.disable_all_items(exclusions=[discord.utils.get(self.children, emoji="\N{HEAVY PLUS SIGN}")])
             await interaction.edit_original_message(view=self)
             return await interaction.response.send_message(
@@ -348,7 +351,8 @@ class TicketQuestionManagerCustomView(CustomView):
         view = RemoveQuestionCustomView(self.ctx, self.config)
         _m = await interaction.followup.send(view=view)
         await view.wait()
-        if len(self.config.questions) > 0:
+        count = await self.config.questions.all().count()
+        if count > 0:
             self.enable_all_items()
             await interaction.edit_original_message(view=self)
         await _m.delete(delay=0.1)
@@ -383,7 +387,7 @@ class CreateNewQuestionModal(Modal):
             discord.ui.InputText(
                 label="Minimum answer length:",
                 custom_id="min_length",
-                placeholder="Blank if no minimum length or not required",
+                placeholder="Blank if no minimum length or not required. must be between 1 and 1024.",
                 max_length=4,
                 required=False,
                 value=str(data.min_length) if data else None,
@@ -443,12 +447,11 @@ class EditQuestionCustomView(CustomView):
                 placeholder="Choose a question",
                 options=[
                     discord.SelectOption(
-                        label=f"Question {n+1} "
-                        f"({textwrap.shorten(self.config.questions[n]['label'], 87, placeholder='...')})",
-                        value=str(n),
-                        emoji=str(n + 1) + "\N{VARIATION SELECTOR-16}\N{COMBINING ENCLOSING KEYCAP}",
+                        label=f"Question {q.entry_id}"
+                        f"({textwrap.shorten(q.label, 87, placeholder='...')})",
+                        value=str(q.entry_id),
                     )
-                    for n in range(len(self.config.questions))
+                    for q in self.config.questions
                 ],
             )
         )
@@ -460,14 +463,12 @@ class EditQuestionCustomView(CustomView):
         assert select is not None
 
         async def callback(interaction: discord.Interaction):
-            index = int(select.values[0])
+            index = select.values[0]
             modal = CreateNewQuestionModal(data=self.config.questions[index])
             new_data = await modal.run(interaction)
-            questions = self.config.questions
-            questions.pop(index)
-            questions.insert(index, new_data)
-            await self.config.update(questions=questions)
-            await interaction.followup.send(f"Edited question #{index+1}.")
+            await TicketQuestion.create(**new_data)
+            await self.config.fetch_related("questions")
+            await interaction.followup.send(f"Edited question.")
             await interaction.delete_original_message(delay=0.1)
             self.stop()
 
@@ -490,12 +491,11 @@ class RemoveQuestionCustomView(CustomView):
                 placeholder="Choose a question",
                 options=[
                     discord.SelectOption(
-                        label=f"Question {n + 1} "
-                        f"({textwrap.shorten(self.config.questions[n]['label'], 87, placeholder='...')})",
-                        value=str(n),
-                        emoji=str(n + 1) + "\N{VARIATION SELECTOR-16}\N{COMBINING ENCLOSING KEYCAP}",
+                        label=f"Question {q.entry_id}"
+                        f"({textwrap.shorten(q.label, 87, placeholder='...')})",
+                        value=str(q.entry_id),
                     )
-                    for n in range(len(self.config.questions))
+                    for q in self.config.questions
                 ],
             )
         )
@@ -508,11 +508,11 @@ class RemoveQuestionCustomView(CustomView):
 
         async def callback(interaction: discord.Interaction):
             await interaction.response.defer()
-            index = int(select.values[0])
-            questions = self.config.questions
-            questions.pop(index)
-            await self.config.update(questions=questions)
-            await interaction.followup.send(f"Deleted question #{index+1}.")
+            index = select.values[0]
+            t = await TicketQuestion.get(entry_id=index)
+            await t.delete()
+            await self.config.fetch_related("questions")
+            await interaction.followup.send(f"Deleted question.")
             await interaction.delete_original_message(delay=0.01)
             self.stop()
 

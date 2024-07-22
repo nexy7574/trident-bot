@@ -22,12 +22,12 @@ class GeneralCog(commands.Cog):
         contexts={
             discord.InteractionContextType.guild,
             discord.InteractionContextType.bot_dm,
-            discord.InteractionContextType.private_channel
+            discord.InteractionContextType.private_channel,
         },
         integration_types={
             discord.IntegrationType.user_install,
             discord.IntegrationType.guild_install,
-        }
+        },
     )
     async def ping(self, ctx: discord.ApplicationContext):
         """Shows the bot's latency"""
@@ -39,12 +39,12 @@ class GeneralCog(commands.Cog):
         contexts={
             discord.InteractionContextType.guild,
             discord.InteractionContextType.bot_dm,
-            discord.InteractionContextType.private_channel
+            discord.InteractionContextType.private_channel,
         },
         integration_types={
             discord.IntegrationType.user_install,
             discord.IntegrationType.guild_install,
-        }
+        },
     )
     async def about(self, ctx: discord.ApplicationContext):
         """Shows information about the bot."""

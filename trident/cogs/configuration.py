@@ -8,7 +8,7 @@ from trident.models import Guild
 from trident.utils.views import (
     ChannelSelectorCustomView,
     ConfirmCustomView,
-    RoleSelectorCustomView,
+    RoleSelectorCustomView, ServerConfigCustomView,
 )
 
 
@@ -91,10 +91,9 @@ class ConfigurationCog(commands.Cog):
         embed.add_field(name="Max open tickets:", value=str(guild.max_tickets))
         embed.add_field(name="Ticket creation enabled:", value="Yes" if guild.support_enabled else "No")
         embed.set_footer(text="Server ID: {}".format(guild.id))
-        # view = ServerConfigCustomView(ctx, guild, *guild.support_roles)
-        view = None
+        view = ServerConfigCustomView(ctx, guild, *guild.support_roles)
         await ctx.respond(embed=embed, view=view)
-        # await view.wait()
+        await view.wait()
 
     @config_group.command(name="reset")
     @discord.default_permissions(administrator=True)

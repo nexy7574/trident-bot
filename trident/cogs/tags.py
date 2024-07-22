@@ -17,23 +17,24 @@ class TagsCog(commands.Cog):
     @staticmethod
     async def tag_autocomplete_internal(ctx: discord.AutocompleteContext):
         assert ctx.interaction.guild is not None
-        all_tags = await Tag.filter(
-            guild__id=ctx.interaction.guild.id,
-            name__icontains=ctx.options["tag"].lower()
-        ).limit(25).all()
+        all_tags = (
+            await Tag.filter(guild__id=ctx.interaction.guild.id, name__icontains=ctx.options["tag"].lower())
+            .limit(25)
+            .all()
+        )
         return [tag.name.lower().strip() for tag in all_tags]
 
     tag_autocomplete = discord.utils.basic_autocomplete(tag_autocomplete_internal)
 
     tag_group = discord.SlashCommandGroup(
-        name="tag",
-        description="Manage tags",
-        contexts={discord.InteractionContextType.guild}
+        name="tag", description="Manage tags", contexts={discord.InteractionContextType.guild}
     )
 
     @tag_group.command(name="view")
     @discord.guild_only()
-    async def tag_view(self, ctx: discord.ApplicationContext, tag: Annotated[str, discord.Option(str, autocomplete=tag_autocomplete)]):
+    async def tag_view(
+        self, ctx: discord.ApplicationContext, tag: Annotated[str, discord.Option(str, autocomplete=tag_autocomplete)]
+    ):
         """View a tag"""
         tag = await Tag.get_or_none(name=tag.lower().strip(), guild__id=ctx.guild.id)
         if not tag:
@@ -154,7 +155,9 @@ class TagsCog(commands.Cog):
             return await ctx.edit(content="Tag was successfully deleted.", view=None)
 
     @tag_group.command(name="edit")
-    async def tag_edit(self, ctx: discord.ApplicationContext, tag: Annotated[str, discord.Option(str, autocomplete=tag_autocomplete)]):
+    async def tag_edit(
+        self, ctx: discord.ApplicationContext, tag: Annotated[str, discord.Option(str, autocomplete=tag_autocomplete)]
+    ):
         """Edits a tag. You must be an administrator or own the tag."""
         tag = await Tag.get_or_none(name=tag.lower().strip(), guild__id=ctx.guild.id)
         if not tag:

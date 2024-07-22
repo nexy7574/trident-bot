@@ -67,11 +67,7 @@ class TicketCog(commands.Cog):
         return any(x in our_roles for x in support_role_ids)
 
     tickets_group = discord.SlashCommandGroup(
-        "ticket",
-        "Manage the current, or create a new ticket.",
-        contexts={
-            discord.InteractionContextType.guild
-        }
+        "ticket", "Manage the current, or create a new ticket.", contexts={discord.InteractionContextType.guild}
     )
 
     @tickets_group.command()
@@ -167,7 +163,7 @@ class TicketCog(commands.Cog):
                             channel=channel.id,
                             author=ctx.author.id,
                             opened_at=discord.utils.utcnow(),
-                            using_db=tx
+                            using_db=tx,
                         )
                     except Exception as e:
                         await channel.delete()
@@ -181,11 +177,7 @@ class TicketCog(commands.Cog):
                             )
 
                         answer_embeds = [
-                            discord.Embed(
-                                title=question.label,
-                                description=answer,
-                                colour=discord.Colour.green()
-                            )
+                            discord.Embed(title=question.label, description=answer, colour=discord.Colour.green())
                             for question, answer in answers.items()
                         ]
                         await channel.send(
